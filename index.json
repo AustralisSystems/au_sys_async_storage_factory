@@ -1,0 +1,132 @@
+{
+  "files": [
+    {
+      "filename": "README.md",
+      "status": "ACTIVE",
+      "summary": "**Version**: 1.0.0 **Last Updated**: 2025-12-15 **Status**: Production Ready",
+      "tags": [
+        "markdown",
+        "readme"
+      ],
+      "type": "md"
+    },
+    {
+      "filename": "__init__.py",
+      "status": "ACTIVE",
+      "summary": "Storage service package scaffolding.",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "beanie_sqlite_adapter.py",
+      "status": "ACTIVE",
+      "summary": "Beanie ODM -> SQLite Adapter - ENTERPRISE GRADE.",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "beanie_tinydb_adapter.py",
+      "status": "ACTIVE",
+      "summary": "Beanie ODM -> TinyDB Adapter - CRITICAL AND MANDATORY.",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "blob_factory.py",
+      "status": "ACTIVE",
+      "summary": "from typing import Optional, Any",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "blob_storage.py",
+      "status": "ACTIVE",
+      "summary": "Blob Storage Service Implementation.",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "config.py",
+      "status": "ACTIVE",
+      "summary": "Storage configuration utilities.",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "connection_registry.py",
+      "status": "ACTIVE",
+      "summary": "import json",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "dynamic_manager.py",
+      "status": "ACTIVE",
+      "summary": "Dynamic storage manager.",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "factory.py",
+      "status": "ACTIVE",
+      "summary": "Storage factory responsible for returning encrypted storage adapters.",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "lifecycle_manager.py",
+      "status": "ACTIVE",
+      "summary": "import logging",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "sqlite_provider.py",
+      "status": "ACTIVE",
+      "summary": "SQLite Storage Provider - Clean implementation following SOLID principles.",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "tinydb_doc_ids.py",
+      "status": "ACTIVE",
+      "summary": "Utility helpers for deterministic TinyDB document identifiers.",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "tinydb_provider.py",
+      "status": "ACTIVE",
+      "summary": "TinyDB Storage Provider - Clean implementation following SOLID principles.",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    }
+  ],
+  "generated_at": "2026-02-18T04:45:03Z"
+}
