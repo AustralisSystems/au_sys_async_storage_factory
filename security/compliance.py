@@ -1,13 +1,13 @@
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable, Any
 
 
 @runtime_checkable
 class ComplianceValidator(Protocol):
     """Protocol for storage compliance validators."""
 
-    def validate(self, config: dict) -> "ValidationResult": ...
+    def validate(self, config: dict[str, Any]) -> "ValidationResult": ...
 
 
 class EncryptionStandard(Enum):

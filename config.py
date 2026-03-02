@@ -11,7 +11,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, SecretStr
 
-from src.shared.services.config.settings import get_settings
+from storage.shared.services.config.settings import get_settings
 
 
 class VectorStoreType(str, Enum):

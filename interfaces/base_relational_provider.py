@@ -1,0 +1,34 @@
+from __future__ import annotations
+
+"""
+Base Relational Provider Interface.
+
+Defines the contract for Relational/SQL storage providers.
+This interface abstracts SQL operations but does not replace the underlying ORM.
+"""
+
+from abc import ABC, abstractmethod
+from typing import Any, Optional, Dict, List
+
+from .storage import IStorageProvider
+from .health import IHealthCheck
+from .backup import IBackupProvider
+
+
+class IRelationalProvider(IStorageProvider, IHealthCheck, IBackupProvider, ABC):
+    """
+    Interface for Relational/SQL storage providers.
+    Extends IStorageProvider, IHealthCheck, and IBackupProvider.
+    """
+
+    @abstractmethod
+    async def initialize(self) -> None:
+        """
+        Initialize the provider, establishing connections and ensuring schema existence.
+        """
+
+    @abstractmethod
+    async def execute_raw_sql(self, sql: str, params: Optional[Dict[str, Any]] = None) -> Any:
+        """
+        Execute a raw SQL query asynchronously.
+        """

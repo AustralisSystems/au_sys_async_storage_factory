@@ -1,42 +1,40 @@
 from __future__ import annotations
 
 """
-Async SQLite Provider - SQLAlchemy Implementation.
+Async Postgres Provider - SQLAlchemy Implementation.
 
-Implements IRelationalProvider using SQLAlchemy with aiosqlite.
+Implements IRelationalProvider using SQLAlchemy with asyncpg.
 Follows the KV-store pattern on top of a relational table.
 
 Compliance:
-- Bandit B608: SQL Injection prevention (SQLAlchemy Core)
 - Zero-Data-Loss Sync capability via ISyncProvider
+- Idempotent initialization
 """
 
 import asyncio
 import json
-import re
 import time
 import logging
 from datetime import datetime, UTC
-from pathlib import Path
 from typing import Any, Optional, Tuple, List, Dict
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from .interfaces.base_relational_provider import IRelationalProvider
-from .interfaces.sync import ISyncProvider, SyncResult, SyncDirection, SyncConflictResolution
+from .interfaces.sync import SyncResult, SyncDirection, SyncConflictResolution
 from .interfaces.health import HealthMonitor
 from .interfaces.storage import StorageError
 
-logger = logging.getLogger("storage.sqlite")
+logger = logging.getLogger("storage.postgres")
 
 Base = declarative_base()
 
 
-class SQLiteKVModel(Base):  # type: ignore
-    """Internal model for KV storage in SQLite."""
+class PostgresKVModel(Base):  # type: ignore
+    """Internal model for KV storage in Postgres."""
 
     __tablename__ = "kv_store"
     key = sa.Column(sa.String(512), primary_key=True, index=True)
@@ -47,25 +45,25 @@ class SQLiteKVModel(Base):  # type: ignore
     )
 
 
-class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
+class AsyncPostgresProvider(IRelationalProvider):
     """
-    SQLite Provider using SQLAlchemy [asyncio] and aiosqlite.
+    Postgres Provider using SQLAlchemy [asyncio] and asyncpg.
     """
 
-    def __init__(self, db_path: str):
+    def __init__(self, connection_url: str, **engine_kwargs: Any):
         """
-        Initialize Async SQLite provider.
+        Initialize Async Postgres provider.
 
         Args:
-            db_path: Path to the SQLite database file.
+            connection_url: Async SQLAlchemy connection string (e.g., postgresql+asyncpg://...)
+            engine_kwargs: Additional kwargs to pass to create_async_engine
         """
-        self.db_path = Path(db_path)
+        self.connection_url = connection_url
         self.table_name = "kv_store"
         self._health_monitor = HealthMonitor()
 
         # SQLAlchemy setup
-        connection_url = f"sqlite+aiosqlite:///{self.db_path}"
-        self._engine = create_async_engine(connection_url)
+        self._engine = create_async_engine(self.connection_url, **engine_kwargs)
         self._async_session = async_sessionmaker(self._engine, expire_on_commit=False, class_=AsyncSession)
         self._init_task: Optional[asyncio.Task[None]] = None
 
@@ -78,23 +76,27 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
     async def _initialize_db(self) -> None:
         """Create schema if it doesn't exist."""
         try:
-            self.db_path.parent.mkdir(parents=True, exist_ok=True)
-
-            # Apply PRAGMAs
-            async with self._engine.connect() as conn:
-                await conn.execute(sa.text("PRAGMA journal_mode=WAL"))
-                await conn.execute(sa.text("PRAGMA synchronous=NORMAL"))
-                await conn.execute(sa.text("PRAGMA foreign_keys=ON"))
-
-                # Create tables
+            async with self._engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
 
-            self._health_monitor.update_health(True, {"db_path": str(self.db_path)})
-            logger.info(f"AsyncSQLite initialized at {self.db_path}")
+            self._health_monitor.update_health(True, {"url": self._mask_url(self.connection_url)})
+            logger.info("AsyncPostgres initialized.")
         except Exception as e:
             self._health_monitor.update_health(False, {"error": str(e)})
-            logger.error(f"AsyncSQLite initialization failed: {e}")
-            raise StorageError(f"Failed to initialize SQLite: {e}") from e
+            logger.error(f"AsyncPostgres initialization failed: {e}")
+            raise StorageError(f"Failed to initialize Postgres: {e}") from e
+
+    def _mask_url(self, url: str) -> str:
+        """Mask credentials from connection URL for logging."""
+        try:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(url)
+            if parsed.password:
+                return url.replace(f":{parsed.password}@", ":****@")
+            return url
+        except Exception:
+            return "masked_url"
 
     def _serialize(self, value: Any) -> str:
         try:
@@ -132,7 +134,7 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
         await self.initialize()
         try:
             async with self._async_session() as session:
-                stmt = sa.select(SQLiteKVModel).where(SQLiteKVModel.key == key)
+                stmt = sa.select(PostgresKVModel).where(PostgresKVModel.key == key)
                 result = await session.execute(stmt)
                 record = result.scalars().first()
 
@@ -148,7 +150,7 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
                 return self._deserialize(record.value)
         except Exception as e:
             self._health_monitor.update_health(False, {"error": str(e)})
-            logger.error(f"SQLite get error for key '{key}': {e}")
+            logger.error(f"Postgres get error for key '{key}': {e}")
             raise StorageError(f"Failed to get key: {e}")
 
     async def set_async(self, key: str, value: Any) -> bool:
@@ -157,11 +159,11 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
     async def set_with_ttl_async(self, key: str, value: Any, ttl: int) -> bool:
         await self.initialize()
         value_json = self._serialize(value)
-        expires_at = time.time() + ttl if ttl >= 0 else None
+        expires_at = time.time() + ttl if (ttl >= 0) else None
 
         try:
             async with self._async_session() as session:
-                stmt = sqlite_insert(SQLiteKVModel).values(
+                stmt = pg_insert(PostgresKVModel).values(
                     key=key, value=value_json, expires_at=expires_at, updated_at=datetime.now(UTC)
                 )
                 stmt = stmt.on_conflict_do_update(
@@ -179,14 +181,14 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
             return True
         except Exception as e:
             self._health_monitor.update_health(False, {"error": str(e)})
-            logger.error(f"SQLite set error for key '{key}': {e}")
+            logger.error(f"Postgres set error for key '{key}': {e}")
             raise StorageError(f"Failed to set key: {e}")
 
     async def delete_async(self, key: str) -> bool:
         await self.initialize()
         try:
             async with self._async_session() as session:
-                stmt = sa.delete(SQLiteKVModel).where(SQLiteKVModel.key == key)
+                stmt = sa.delete(PostgresKVModel).where(PostgresKVModel.key == key)
                 result = await session.execute(stmt)
                 await session.commit()
                 deleted = result.rowcount > 0
@@ -195,7 +197,7 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
             return deleted
         except Exception as e:
             self._health_monitor.update_health(False, {"error": str(e)})
-            logger.error(f"SQLite delete error for key '{key}': {e}")
+            logger.error(f"Postgres delete error for key '{key}': {e}")
             raise StorageError(f"Failed to delete key: {e}")
 
     async def exists_async(self, key: str) -> bool:
@@ -206,7 +208,7 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
         await self.initialize()
         try:
             async with self._async_session() as session:
-                stmt = sa.select(SQLiteKVModel.key, SQLiteKVModel.expires_at)
+                stmt = sa.select(PostgresKVModel.key, PostgresKVModel.expires_at)
                 result = await session.execute(stmt)
                 rows = result.fetchall()
 
@@ -217,6 +219,8 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
                 keys.append(k)
 
             if pattern:
+                import re
+
                 regex = re.compile(pattern, re.IGNORECASE)
                 keys = [k for k in keys if regex.search(k)]
 
@@ -224,14 +228,14 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
             return keys
         except Exception as e:
             self._health_monitor.update_health(False, {"error": str(e)})
-            logger.error(f"SQLite list_keys error: {e}")
+            logger.error(f"Postgres list_keys error: {e}")
             raise StorageError(f"Failed to list keys: {e}")
 
     async def find_async(self, query: dict[str, Any]) -> list[Any]:
         await self.initialize()
         try:
             async with self._async_session() as session:
-                stmt = sa.select(SQLiteKVModel.value, SQLiteKVModel.expires_at)
+                stmt = sa.select(PostgresKVModel.value, PostgresKVModel.expires_at)
                 result = await session.execute(stmt)
                 rows = result.fetchall()
 
@@ -254,14 +258,14 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
                     results.append(value)
             return results
         except Exception as e:
-            logger.error(f"SQLite find error: {e}")
+            logger.error(f"Postgres find error: {e}")
             raise StorageError(f"Find operation failed: {e}")
 
     async def clear_async(self) -> int:
         await self.initialize()
         try:
             async with self._async_session() as session:
-                result = await session.execute(sa.delete(SQLiteKVModel))
+                result = await session.execute(sa.delete(PostgresKVModel))
                 await session.commit()
                 count = result.rowcount
 
@@ -269,7 +273,7 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
             return count
         except Exception as e:
             self._health_monitor.update_health(False, {"error": str(e)})
-            logger.error(f"SQLite clear error: {e}")
+            logger.error(f"Postgres clear error: {e}")
             raise StorageError(f"Failed to clear storage: {e}")
 
     # --- ISyncProvider Implementation ---
@@ -309,7 +313,7 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
         return result
 
     def get_sync_metadata(self) -> dict[str, Any]:
-        return {"provider": "sqlite", "table": self.table_name}
+        return {"provider": "postgres", "table": self.table_name}
 
     async def prepare_for_sync(self) -> bool:
         return True
@@ -321,9 +325,9 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
         await self.initialize()
         try:
             async with self._async_session() as session:
-                stmt = sa.select(SQLiteKVModel)
+                stmt = sa.select(PostgresKVModel)
                 if last_sync_timestamp:
-                    stmt = stmt.where(SQLiteKVModel.updated_at > last_sync_timestamp)
+                    stmt = stmt.where(PostgresKVModel.updated_at > last_sync_timestamp)
 
                 result = await session.execute(stmt)
                 records = result.scalars().all()
@@ -345,7 +349,7 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
         self,
         sync_data: list[dict[str, Any]],
         conflict_resolution: SyncConflictResolution = SyncConflictResolution.NEWEST_WINS,
-    ) -> Tuple[int, List[Dict[str, Any]]]:  # Keep using Tuple/List for compatibility if needed, or dict/list
+    ) -> Tuple[int, List[Dict[str, Any]]]:
         await self.initialize()
         applied = 0
         conflicts: list[dict[str, Any]] = []
@@ -355,10 +359,9 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
             new_val = item["value"]
             new_updated = item["updated_at"]
 
-            # Conflict check
             existing_record = None
             async with self._async_session() as session:
-                stmt = sa.select(SQLiteKVModel).where(SQLiteKVModel.key == key)
+                stmt = sa.select(PostgresKVModel).where(PostgresKVModel.key == key)
                 res = await session.execute(stmt)
                 existing_record = res.scalars().first()
 
@@ -400,56 +403,62 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
     # --- IBackupProvider Implementation ---
 
     async def create_backup(self, backup_path: str, metadata: Optional[dict[str, Any]] = None) -> bool:
-        """Create a backup of the SQLite database asynchronously."""
-        import shutil
-
+        """Sovereign backup implementation (JSON)."""
+        await self.initialize()
         try:
+            data = await self.get_data_for_sync()
+            backup_payload = {
+                "metadata": {
+                    "provider": "postgres",
+                    "timestamp": datetime.now(UTC).isoformat(),
+                    "custom": metadata or {},
+                },
+                "data": data,
+            }
+            import aiofiles
+            from pathlib import Path
+
             target = Path(backup_path)
             target.parent.mkdir(parents=True, exist_ok=True)
-            # Use threadpool for file operation
-            await asyncio.to_thread(shutil.copy2, str(self.db_path), str(target))
+            async with aiofiles.open(target, mode="w", encoding="utf-8") as f:
+                await f.write(json.dumps(backup_payload, indent=2, default=str))
             return True
         except Exception as e:
-            logger.error(f"Backup failed: {e}")
+            logger.error(f"Postgres backup failed: {e}")
             return False
 
     async def restore_backup(self, backup_path: str, clear_existing: bool = False) -> bool:
-        """Restore the database from a backup asynchronously."""
-        import shutil
-
+        await self.initialize()
         try:
-            if clear_existing and self.db_path.exists():
-                self.db_path.unlink()
-            await asyncio.to_thread(shutil.copy2, backup_path, str(self.db_path))
+            import aiofiles
+
+            async with aiofiles.open(backup_path, mode="r", encoding="utf-8") as f:
+                content = await f.read()
+                backup_data = json.loads(content)
+
+            if clear_existing:
+                await self.clear_async()
+
+            applied, conflicts = await self.apply_sync_data(
+                backup_data.get("data", []), SyncConflictResolution.SOURCE_WINS
+            )
             return True
         except Exception as e:
-            logger.error(f"Restore failed: {e}")
+            logger.error(f"Postgres restore failed: {e}")
             return False
 
-    async def validate_backup(self, backup_path: str) -> dict[Any, Any]:
-        """Validate a backup file asynchronously."""
-        return {"valid": Path(backup_path).exists()}
+    async def validate_backup(self, backup_path: str) -> dict[str, Any]:
+        try:
+            from pathlib import Path
+
+            if not Path(backup_path).exists():
+                return {"valid": False, "error": "File not found"}
+            return {"valid": True}
+        except Exception as e:
+            return {"valid": False, "error": str(e)}
 
     async def list_backups(self, backup_dir: str) -> dict[str, dict[str, Any]]:
-        """List available backups in a directory asynchronously."""
-        backup_path = Path(backup_dir)
-        if not backup_path.exists():
-            return {}
-
-        backups = {}
-        pattern = f"{self.db_path.stem}_*.sqlite"
-
-        for file_path in backup_path.glob(pattern):
-            try:
-                backups[file_path.name] = {
-                    "path": str(file_path),
-                    "size_bytes": file_path.stat().st_size,
-                    "created_at": datetime.fromtimestamp(file_path.stat().st_ctime, UTC).isoformat(),
-                }
-            except Exception:
-                continue
-
-        return backups
+        return {}
 
     def supports_ttl(self) -> bool:
         return True

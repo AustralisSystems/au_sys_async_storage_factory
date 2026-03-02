@@ -13,7 +13,7 @@ from storage.interfaces.health import HealthMonitor, IHealthCheck
 from storage.interfaces.storage import IStorageProvider, StorageError
 
 def get_logger():
-    from src.shared.observability.logger_factory import create_debug_logger
+    from storage.shared.observability.logger_factory import create_debug_logger
     return create_debug_logger(__name__)
 
 class _LazyLoggerProxy:
