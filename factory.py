@@ -74,6 +74,21 @@ class AsyncStorageFactory:
         await provider.initialize()
         return provider
 
+
+    def get_db_session(self):
+        """
+        Bridge to the underlying transactional database session, complying with hexangal patterns.
+        """
+        from src.shared.services.config.database import get_db_session
+        return get_db_session()
+
+    def get_db_session_sync(self):
+        """
+        Bridge to the underlying transactional database session (sync).
+        """
+        from src.shared.services.config.database import get_db_session_sync
+        return get_db_session_sync()
+
     def get_factory_health(self) -> dict[str, bool]:
         """
         Returns rudimentary health metadata for the factory itself.
