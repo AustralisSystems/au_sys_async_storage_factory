@@ -2,8 +2,9 @@
 FastAPI router for Document Storage (NoSQL) operations.
 """
 
-from typing import Any, Dict, List, Optional, Type, cast
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from typing import Any, Optional, cast
+
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from storage.interfaces.base_document_provider import IDocumentProvider

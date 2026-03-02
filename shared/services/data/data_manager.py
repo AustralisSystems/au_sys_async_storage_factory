@@ -59,7 +59,6 @@ except ImportError:
     _HAS_REDIS = False
 
 
-from storage.factory import get_storage_factory
 from storage.interfaces.backup import IBackupProvider
 from storage.shared.observability.logger_factory import get_component_logger
 from storage.shared.services.config.settings import get_settings
@@ -860,7 +859,7 @@ class DataManager(IBackupProvider):
                 extra={"path": relative_path, "recursive": recursive},
             )
             return True
-        except Exception as exc:
+        except Exception:
             return False
 
     # ------------------------------------------------------------------

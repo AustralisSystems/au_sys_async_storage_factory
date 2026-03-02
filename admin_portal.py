@@ -9,10 +9,9 @@ health monitoring, and configuration updates.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .factory import get_storage_factory
-from .interfaces.health import IHealthCheck
 
 logger = logging.getLogger(__name__)
 

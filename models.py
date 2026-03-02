@@ -9,6 +9,7 @@ Zero-Hardcode Mandate.
 
 from enum import Enum
 from typing import Any, Optional
+
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 

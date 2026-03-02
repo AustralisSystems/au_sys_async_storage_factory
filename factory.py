@@ -8,20 +8,20 @@ configuration. Enforces lazy-loading, Zero-Hardcode Mandate, and
 cross-category failover/tiering.
 """
 
-import logging
-import json
 import asyncio
+import json
+import logging
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional, Any, cast
-from datetime import datetime, UTC
+from typing import Any, Optional, cast
 
 from .config import get_storage_settings
-from .models import StorageBackendConfig, StorageManifest, StorageBackendType
-from .interfaces.storage import IStorageProvider, StorageError
-from .interfaces.base_document_provider import IDocumentProvider
-from .interfaces.base_vector_provider import IVectorProvider
-from .interfaces.base_graph_provider import IGraphProvider
 from .interfaces.base_blob_provider import BaseBlobProvider
+from .interfaces.base_document_provider import IDocumentProvider
+from .interfaces.base_graph_provider import IGraphProvider
+from .interfaces.base_vector_provider import IVectorProvider
+from .interfaces.storage import IStorageProvider, StorageError
+from .models import StorageBackendConfig, StorageBackendType, StorageManifest
 
 logger = logging.getLogger(__name__)
 

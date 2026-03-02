@@ -4,13 +4,13 @@ Main entry point for storage routers.
 
 from fastapi import APIRouter
 
-from storage.routers.factory import router as factory_router
-from storage.routers.data_manager import router as data_manager_router
-from storage.routers.relational import router as relational_router
-from storage.routers.document import router as document_router
 from storage.routers.blob import router as blob_router
-from storage.routers.vector import router as vector_router
+from storage.routers.data_manager import router as data_manager_router
+from storage.routers.document import router as document_router
+from storage.routers.factory import router as factory_router
 from storage.routers.graph import router as graph_router
+from storage.routers.relational import router as relational_router
+from storage.routers.vector import router as vector_router
 
 
 def get_storage_router() -> APIRouter:

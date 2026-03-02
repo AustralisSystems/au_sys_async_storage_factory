@@ -12,16 +12,12 @@ Compliance:
 
 import json
 import sys
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Optional, Dict, List, Tuple, cast
+from typing import TYPE_CHECKING, Any, Awaitable, Optional, cast
 
 if TYPE_CHECKING:
-    from redis.asyncio import Redis as _RedisType
-    from redis.asyncio.cluster import RedisCluster as _RedisClusterType
-    from redisvl.index import AsyncSearchIndex as _AsyncSearchIndexType
-    from redisvl.query import VectorQuery as _VectorQueryType
-    from redisvl.schema import IndexSchema as _IndexSchemaType
+    pass
 
 try:
     import aiofiles  # type: ignore[import-untyped]
@@ -64,12 +60,11 @@ except ImportError:
         """Fallback stub when redisvl is not installed."""
 
 
-from ..interfaces.base_vector_provider import IVectorProvider
-from ..interfaces.sync import ISyncProvider, SyncResult, SyncDirection, SyncConflictResolution
-from ..interfaces.health import IHealthCheck, HealthMonitor
 from ..interfaces.backup import IBackupProvider
+from ..interfaces.base_vector_provider import IVectorProvider
+from ..interfaces.health import HealthMonitor, IHealthCheck
 from ..interfaces.storage import StorageError
-
+from ..interfaces.sync import ISyncProvider, SyncConflictResolution, SyncDirection, SyncResult
 from ..shared.observability.logger_factory import get_component_logger
 
 # Force UTF-8 stdout encoding for Python CLIs

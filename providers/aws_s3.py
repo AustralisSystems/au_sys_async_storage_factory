@@ -1,6 +1,6 @@
 import asyncio
 import sys
-from typing import Optional, Union, AsyncIterator, Any
+from typing import Any, AsyncIterator, Optional, Union
 
 try:
     import aioboto3
@@ -11,14 +11,14 @@ except ImportError:
     HAS_S3_LIBS = False
     ClientError = Exception
 
-from storage.shared.observability.logger_factory import get_component_logger
 from storage.interfaces.base_blob_provider import BaseBlobProvider
 from storage.security.compliance import (
     EncryptionStandard,
+    StorageCompliance,
     TransportSecurity,
     ValidationResult,
-    StorageCompliance,
 )
+from storage.shared.observability.logger_factory import get_component_logger
 
 # Force UTF-8 stdout encoding for Python CLIs
 if sys.stdout.encoding != "utf-8" and hasattr(sys.stdout, "reconfigure"):
@@ -194,8 +194,8 @@ class S3BlobProvider(BaseBlobProvider):
         All blobs are downloaded asynchronously first, then the ZIP is written
         via asyncio.to_thread to avoid blocking sync I/O interleaved with async calls.
         """
-        import zipfile
         import json as _json
+        import zipfile
         from pathlib import Path
 
         try:
@@ -231,7 +231,6 @@ class S3BlobProvider(BaseBlobProvider):
         Restores S3 bucket from a sovereign backup archive.
         """
         import zipfile
-        from pathlib import Path
 
         try:
             if clear_existing:
@@ -272,8 +271,8 @@ class S3BlobProvider(BaseBlobProvider):
         """
         Lists available S3 backups in a local directory.
         """
+        from datetime import UTC, datetime
         from pathlib import Path
-        from datetime import datetime, UTC
 
         backups = {}
         path = Path(backup_dir)

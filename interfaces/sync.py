@@ -8,9 +8,9 @@ This interface enables seamless failover with no data loss.
 """
 
 from abc import ABC, abstractmethod
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Optional, Tuple
+from typing import Any, Optional
 
 from .storage import IStorageProvider
 

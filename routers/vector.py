@@ -2,7 +2,8 @@
 FastAPI router for Vector Storage operations.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from storage.interfaces.base_vector_provider import IVectorProvider

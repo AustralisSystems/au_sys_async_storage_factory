@@ -7,7 +7,7 @@ Defines health monitoring capabilities for storage providers.
 """
 
 from abc import ABC, abstractmethod
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import Any, Optional
 
 

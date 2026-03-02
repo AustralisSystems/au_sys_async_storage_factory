@@ -9,8 +9,9 @@ environment variables with appropriate defaults.
 """
 
 from typing import Optional
+
+from pydantic import Field, PostgresDsn, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, SecretStr, PostgresDsn
 
 
 class StorageSettings(BaseSettings):

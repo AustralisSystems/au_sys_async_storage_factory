@@ -8,15 +8,13 @@ Model Context Protocol (MCP). Provides tools for blob management,
 database queries, and metadata retrieval.
 """
 
-import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from mcp.server.fastapi import Context, Resource
 from mcp.types import Tool
 
-from .factory import get_storage_factory
 from .admin_portal import get_admin_portal_service
+from .factory import get_storage_factory
 
 logger = logging.getLogger(__name__)
 

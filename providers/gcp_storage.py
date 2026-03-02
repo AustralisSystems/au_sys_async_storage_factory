@@ -1,19 +1,19 @@
 import asyncio
 import functools
-import sys
 import json
+import sys
 import zipfile
-from typing import Optional, Union, AsyncIterator, Any
-from datetime import timedelta, datetime, UTC
+from datetime import UTC, datetime, timedelta
+from typing import Any, AsyncIterator, Optional, Union
 
-from storage.shared.observability.logger_factory import get_component_logger
 from storage.interfaces.base_blob_provider import BaseBlobProvider
 from storage.security.compliance import (
-    StorageCompliance,
-    ValidationResult,
     EncryptionStandard,
+    StorageCompliance,
     TransportSecurity,
+    ValidationResult,
 )
+from storage.shared.observability.logger_factory import get_component_logger
 
 # Force UTF-8 stdout encoding for Python CLIs
 if sys.stdout.encoding != "utf-8" and hasattr(sys.stdout, "reconfigure"):
@@ -200,7 +200,6 @@ class GCPBlobProvider(BaseBlobProvider):
     async def list_backups(self, backup_dir: str) -> dict[str, dict[str, Any]]:
         """Lists available GCP backups locally."""
         from pathlib import Path
-        from datetime import datetime, UTC
 
         backups = {}
         path = Path(backup_dir)

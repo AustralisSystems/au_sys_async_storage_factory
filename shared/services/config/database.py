@@ -11,9 +11,9 @@ Author: Digital Angels Team
 Version: 1.0.0
 """
 
+import logging
 from typing import Any, Optional, cast
 from uuid import uuid4
-import logging
 
 from sqlalchemy import (
     JSON,

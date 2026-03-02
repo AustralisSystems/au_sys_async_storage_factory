@@ -7,10 +7,10 @@ Implements IVectorProvider using qdrant-client for native async support.
 """
 
 import json
-import uuid
 import logging
-from datetime import datetime, UTC
-from typing import Any, Optional, Dict, List, Tuple
+import uuid
+from datetime import datetime
+from typing import Any, Optional
 
 try:
     from qdrant_client import AsyncQdrantClient
@@ -26,9 +26,9 @@ except ImportError:
     HAS_QDRANT = False
 
 from ..interfaces.base_vector_provider import IVectorProvider
-from ..interfaces.sync import ISyncProvider, SyncResult, SyncDirection, SyncConflictResolution
-from ..interfaces.health import IHealthCheck, HealthMonitor
+from ..interfaces.health import HealthMonitor, IHealthCheck
 from ..interfaces.storage import StorageError
+from ..interfaces.sync import ISyncProvider, SyncConflictResolution, SyncDirection, SyncResult
 
 logger = logging.getLogger(__name__)
 

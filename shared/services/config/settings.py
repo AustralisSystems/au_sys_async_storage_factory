@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import ast
-import json
-import os
 from functools import lru_cache
-from typing import Any, Callable, TypeVar, Union
+from typing import Any, TypeVar
 
 from dotenv import load_dotenv
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 from storage.shared.observability.logger_factory import get_component_logger as get_logger
 
 logger = get_logger(__name__)

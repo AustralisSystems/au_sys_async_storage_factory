@@ -2,7 +2,8 @@
 FastAPI router for Graph Storage operations.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from storage.interfaces.base_graph_provider import IGraphProvider

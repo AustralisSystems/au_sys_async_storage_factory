@@ -8,20 +8,21 @@ enabling MongoDB -> TinyDB fallback capability.
 """
 
 import asyncio
-import logging
 import json
-from datetime import datetime, UTC
+import logging
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional, TypeVar, Type, List, Dict, Tuple, Union, cast
+from typing import Any, Optional, TypeVar, cast
 
 from beanie import Document, PydanticObjectId
 from tinydb import Query, TinyDB
 
 from storage.shared.manifest.lifecycle import BaseLifecycleMixin
+
 from ..interfaces.base_document_provider import IDocumentProvider
-from ..interfaces.sync import ISyncProvider, SyncResult, SyncDirection, SyncConflictResolution
-from ..interfaces.health import IHealthCheck, HealthMonitor
+from ..interfaces.health import HealthMonitor, IHealthCheck
 from ..interfaces.storage import OperationNotSupported, StorageError
+from ..interfaces.sync import ISyncProvider, SyncConflictResolution, SyncDirection, SyncResult
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +75,8 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
 
     def _get_collection_name(self, model_class: type[Document]) -> str:
         if hasattr(model_class, "Settings") and hasattr(model_class.Settings, "name"):
-            return cast(str, model_class.Settings.name)
-        return model_class.__name__.lower()
+            return str(model_class.Settings.name)
+        return str(model_class.__name__.lower())
 
     def _document_to_dict(self, document: Document) -> dict[str, Any]:
         if hasattr(document, "model_dump"):
@@ -97,7 +98,7 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
         if not query:
             return None
 
-        tinydb_query = None
+        tinydb_query: Optional[Query] = None
 
         def add_cond(new_cond: Any) -> None:
             nonlocal tinydb_query
@@ -231,12 +232,12 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
             instance = args[0] if args and isinstance(args[0], model_class) else model_class(**kwargs)
             return await adapter.insert_one(instance)
 
-        model_class.find_one = staticmethod(find_one_patch)  # type: ignore[method-assign, assignment]
-        model_class.find_many = staticmethod(find_many_patch)  # type: ignore[method-assign, assignment]
-        model_class.create = create_patch  # type: ignore
-        model_class.insert = lambda self_inst, **kwargs: adapter.insert_one(self_inst)  # type: ignore
-        model_class.save = lambda self_inst, **kwargs: adapter.update_one(self_inst, {})  # type: ignore
-        model_class.delete = lambda self_inst, **kwargs: adapter.delete_one(self_inst)  # type: ignore
+        model_class.find_one = staticmethod(find_one_patch)
+        model_class.find_many = staticmethod(find_many_patch)
+        model_class.create = create_patch
+        model_class.insert = lambda self_inst, **kwargs: adapter.insert_one(self_inst)
+        model_class.save = lambda self_inst, **kwargs: adapter.update_one(self_inst, {})
+        model_class.delete = lambda self_inst, **kwargs: adapter.delete_one(self_inst)
 
         # Patch Settings
         class SettingsProxy:
@@ -263,7 +264,7 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
                 return None
 
         proxy = SettingsProxy(model_class)
-        model_class.get_settings = classmethod(lambda cls: proxy)  # type: ignore[method-assign, assignment]
+        model_class.get_settings = classmethod(lambda cls: proxy)
         model_class.Settings = proxy
         model_class._settings = proxy
 
@@ -340,7 +341,7 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
                     docs = await self.find_many(model_class, {})
                     for doc in docs:
                         if not dry_run:
-                            await cast(Any, target_provider).insert_one(doc)
+                            await target_provider.insert_one(doc)
                         result.items_synced += 1
 
             elif direction == SyncDirection.FROM_TARGET:
@@ -367,7 +368,7 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
                     docs = await self.find_many(model_class, {})
                     for doc in docs:
                         if not dry_run:
-                            await cast(Any, target_provider).insert_one(doc)
+                            await target_provider.insert_one(doc)
                         result.items_synced += 1
 
                 sync_data = await target_provider.get_data_for_sync()

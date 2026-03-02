@@ -4,8 +4,8 @@ import asyncio
 import json
 import logging
 import time
-from datetime import datetime, UTC
-from typing import Any, Optional, Union, cast
+from datetime import datetime
+from typing import Any, Optional, cast
 
 import sqlalchemy as sa
 from sqlalchemy.engine import CursorResult
