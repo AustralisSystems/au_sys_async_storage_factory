@@ -24,7 +24,7 @@ from sqlalchemy.orm import declarative_base
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from .interfaces.base_relational_provider import IRelationalProvider
-from .interfaces.sync import SyncResult, SyncDirection, SyncConflictResolution
+from .interfaces.sync import SyncResult, SyncDirection, SyncConflictResolution, ISyncProvider
 from .interfaces.health import HealthMonitor
 from .interfaces.storage import StorageError
 
@@ -45,7 +45,7 @@ class PostgresKVModel(Base):  # type: ignore
     )
 
 
-class AsyncPostgresProvider(IRelationalProvider):
+class AsyncPostgresProvider(IRelationalProvider, ISyncProvider):
     """
     Postgres Provider using SQLAlchemy [asyncio] and asyncpg.
     """
@@ -141,13 +141,15 @@ class AsyncPostgresProvider(IRelationalProvider):
                 if not record:
                     return None
 
-                if self._is_expired(record.expires_at):
+                exp_at: Optional[float] = getattr(record, "expires_at", None)
+                if self._is_expired(exp_at):
                     await session.delete(record)
                     await session.commit()
                     return None
 
                 self._health_monitor.update_health(True)
-                return self._deserialize(record.value)
+                val_json: str = getattr(record, "value", "")
+                return self._deserialize(val_json)
         except Exception as e:
             self._health_monitor.update_health(False, {"error": str(e)})
             logger.error(f"Postgres get error for key '{key}': {e}")
@@ -159,7 +161,7 @@ class AsyncPostgresProvider(IRelationalProvider):
     async def set_with_ttl_async(self, key: str, value: Any, ttl: int) -> bool:
         await self.initialize()
         value_json = self._serialize(value)
-        expires_at = time.time() + ttl if (ttl >= 0) else None
+        expires_at = time.time() + ttl if ttl >= 0 else None
 
         try:
             async with self._async_session() as session:
@@ -213,10 +215,10 @@ class AsyncPostgresProvider(IRelationalProvider):
                 rows = result.fetchall()
 
             keys = []
-            for k, expires_at in rows:
-                if self._is_expired(expires_at):
+            for k, exp_at in rows:
+                if self._is_expired(exp_at):
                     continue
-                keys.append(k)
+                keys.append(str(k))
 
             if pattern:
                 import re
@@ -240,11 +242,11 @@ class AsyncPostgresProvider(IRelationalProvider):
                 rows = result.fetchall()
 
             results = []
-            for value_json, expires_at in rows:
-                if self._is_expired(expires_at):
+            for val_json, exp_at in rows:
+                if self._is_expired(exp_at):
                     continue
 
-                value = self._deserialize(value_json)
+                value = self._deserialize(str(val_json))
                 if not isinstance(value, dict):
                     continue
 
@@ -334,8 +336,8 @@ class AsyncPostgresProvider(IRelationalProvider):
 
                 return [
                     {
-                        "key": r.key,
-                        "value": self._deserialize(r.value),
+                        "key": str(r.key),
+                        "value": self._deserialize(str(r.value)),
                         "expires_at": r.expires_at,
                         "updated_at": r.updated_at,
                     }
@@ -349,7 +351,7 @@ class AsyncPostgresProvider(IRelationalProvider):
         self,
         sync_data: list[dict[str, Any]],
         conflict_resolution: SyncConflictResolution = SyncConflictResolution.NEWEST_WINS,
-    ) -> Tuple[int, List[Dict[str, Any]]]:
+    ) -> tuple[int, list[dict[str, Any]]]:
         await self.initialize()
         applied = 0
         conflicts: list[dict[str, Any]] = []
@@ -366,8 +368,9 @@ class AsyncPostgresProvider(IRelationalProvider):
                 existing_record = res.scalars().first()
 
             if existing_record:
+                existing_updated: Optional[datetime] = getattr(existing_record, "updated_at", None)
                 if conflict_resolution == SyncConflictResolution.NEWEST_WINS:
-                    if existing_record.updated_at and new_updated <= existing_record.updated_at:
+                    if existing_updated and new_updated <= existing_updated:
                         continue
                 elif conflict_resolution == SyncConflictResolution.TARGET_WINS:
                     continue
@@ -432,16 +435,15 @@ class AsyncPostgresProvider(IRelationalProvider):
         try:
             import aiofiles
 
-            async with aiofiles.open(backup_path, mode="r", encoding="utf-8") as f:
+            async with aiofiles.open(backup_path, encoding="utf-8") as f:
                 content = await f.read()
                 backup_data = json.loads(content)
 
             if clear_existing:
                 await self.clear_async()
 
-            applied, conflicts = await self.apply_sync_data(
-                backup_data.get("data", []), SyncConflictResolution.SOURCE_WINS
-            )
+            sync_data = backup_data.get("data", [])
+            await self.apply_sync_data(sync_data, SyncConflictResolution.SOURCE_WINS)
             return True
         except Exception as e:
             logger.error(f"Postgres restore failed: {e}")

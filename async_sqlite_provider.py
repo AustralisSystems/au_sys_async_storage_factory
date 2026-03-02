@@ -18,7 +18,7 @@ import time
 import logging
 from datetime import datetime, UTC
 from pathlib import Path
-from typing import Any, Optional, Tuple, List, Dict
+from typing import Any, Optional
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -139,13 +139,13 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
                 if not record:
                     return None
 
-                if self._is_expired(record.expires_at):
+                if self._is_expired(float(record.expires_at) if record.expires_at is not None else None):
                     await session.delete(record)
                     await session.commit()
                     return None
 
                 self._health_monitor.update_health(True)
-                return self._deserialize(record.value)
+                return self._deserialize(str(record.value))
         except Exception as e:
             self._health_monitor.update_health(False, {"error": str(e)})
             logger.error(f"SQLite get error for key '{key}': {e}")
@@ -211,10 +211,10 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
                 rows = result.fetchall()
 
             keys = []
-            for k, expires_at in rows:
-                if self._is_expired(expires_at):
+            for k, exp_at in rows:
+                if self._is_expired(exp_at):
                     continue
-                keys.append(k)
+                keys.append(str(k))
 
             if pattern:
                 regex = re.compile(pattern, re.IGNORECASE)
@@ -236,11 +236,11 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
                 rows = result.fetchall()
 
             results = []
-            for value_json, expires_at in rows:
-                if self._is_expired(expires_at):
+            for val_json, exp_at in rows:
+                if self._is_expired(exp_at):
                     continue
 
-                value = self._deserialize(value_json)
+                value = self._deserialize(str(val_json))
                 if not isinstance(value, dict):
                     continue
 
@@ -330,8 +330,8 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
 
                 return [
                     {
-                        "key": r.key,
-                        "value": self._deserialize(r.value),
+                        "key": str(r.key),
+                        "value": self._deserialize(str(r.value)),
                         "expires_at": r.expires_at,
                         "updated_at": r.updated_at,
                     }
@@ -345,7 +345,7 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
         self,
         sync_data: list[dict[str, Any]],
         conflict_resolution: SyncConflictResolution = SyncConflictResolution.NEWEST_WINS,
-    ) -> Tuple[int, List[Dict[str, Any]]]:  # Keep using Tuple/List for compatibility if needed, or dict/list
+    ) -> tuple[int, list[dict[str, Any]]]:
         await self.initialize()
         applied = 0
         conflicts: list[dict[str, Any]] = []
@@ -426,7 +426,7 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
             logger.error(f"Restore failed: {e}")
             return False
 
-    async def validate_backup(self, backup_path: str) -> dict[Any, Any]:
+    async def validate_backup(self, backup_path: str) -> dict[str, Any]:
         """Validate a backup file asynchronously."""
         return {"valid": Path(backup_path).exists()}
 

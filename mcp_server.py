@@ -31,7 +31,7 @@ class MCPStorageServer:
         self.factory = get_storage_factory()
         self.admin = get_admin_portal_service()
 
-    def get_tools(self) -> List[Tool]:
+    def get_tools(self) -> list[Tool]:
         """
         Returns a list of MCP tools exposed by this server.
         """
@@ -66,7 +66,7 @@ class MCPStorageServer:
             ),
         ]
 
-    async def call_tool(self, name: str, arguments: Dict[str, Any]) -> Any:
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         """
         Executes a specific tool requested by the agent.
         """
@@ -74,18 +74,17 @@ class MCPStorageServer:
             # This would integrate with the active blob provider
             return {"blobs": []}
 
-        elif name == "upload_blob":
+        if name == "upload_blob":
             key = arguments.get("key")
             data = arguments.get("data")
             logger.info(f"Agent uploading blob to {key}")
             # Logic to use factory and upload
             return {"success": True, "key": key}
 
-        elif name == "get_storage_health":
+        if name == "get_storage_health":
             return await self.admin.get_all_providers_health()
 
-        else:
-            raise ValueError(f"Unknown tool: {name}")
+        raise ValueError(f"Unknown tool: {name}")
 
 
 _mcp_server = None

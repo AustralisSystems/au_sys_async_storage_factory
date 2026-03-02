@@ -658,11 +658,11 @@ def get_tenant_db_session_sync(url: str) -> Session:
 async def dispose_database() -> None:
     """Dispose database engines to clean up connection pools."""
     global _async_engine, _sync_engine
-    
+
     if _async_engine:
         await _async_engine.dispose()
         _async_engine = None
-        
+
     if _sync_engine:
         _sync_engine.dispose()
         _sync_engine = None

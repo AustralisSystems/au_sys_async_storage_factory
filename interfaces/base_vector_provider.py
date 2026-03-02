@@ -11,29 +11,47 @@ from abc import ABC, abstractmethod
 from typing import Any, Optional, Dict, List
 
 from .storage import IStorageProvider
+from .health import IHealthCheck
+from .backup import IBackupProvider
 
 
-class IVectorProvider(IStorageProvider, ABC):
+class IVectorProvider(IStorageProvider, IHealthCheck, IBackupProvider, ABC):
     """
     Interface for Vector storage providers.
     """
 
     @abstractmethod
     async def initialize(self) -> None:
-        """Initialize connection and collections."""
+        """Initialize connection and verify backend availability."""
 
     @abstractmethod
-    async def create_collection(self, name: str, dimension: int, **kwargs: Any) -> bool:
-        """Create vector collection/index."""
+    async def create_index(self, name: str, dimension: int, distance_metric: str = "cosine", **kwargs: Any) -> bool:
+        """Create or initialize a vector index/collection."""
 
     @abstractmethod
-    async def upsert_vectors(self, collection: str, vectors: List[Dict[str, Any]]) -> bool:
-        """Upsert vectors with metadata."""
+    async def upsert(
+        self,
+        index_name: str,
+        vectors: list[list[float]],
+        metadata: list[dict[str, Any]],
+        ids: Optional[list[str]] = None,
+    ) -> bool:
+        """Insert or update vectors with associated metadata."""
 
     @abstractmethod
-    async def search(self, collection: str, query_vector: List[float], limit: int = 10) -> List[Dict[str, Any]]:
-        """Search for similar vectors."""
+    async def search(
+        self, index_name: str, query_vector: list[float], limit: int = 10, filters: Optional[dict[str, Any]] = None
+    ) -> list[dict[str, Any]]:
+        """Search for top-K similar vectors."""
 
     @abstractmethod
-    async def delete_vectors(self, collection: str, ids: List[str]) -> bool:
+    async def delete(self, index_name: str, ids: list[str]) -> bool:
         """Delete vectors by ID."""
+
+    @abstractmethod
+    async def get_index_stats(self, index_name: str) -> dict[str, Any]:
+        """Get statistics about the index."""
+
+    @abstractmethod
+    async def drop_index(self, index_name: str) -> bool:
+        """Permanently delete an index."""

@@ -52,11 +52,11 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.encryption_key = encryption_key
-        self.document_models: List[Type[Document]] = []
+        self.document_models: list[type[Document]] = []
         self._health_monitor = HealthMonitor()
         self._running = True
 
-    async def initialize(self, document_models: Optional[List[Type[Document]]] = None) -> None:
+    async def initialize(self, document_models: Optional[list[type[Document]]] = None) -> None:
         """
         Create tables and optimized indexes for all registered models.
         """
@@ -65,6 +65,9 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
             async with aiosqlite.connect(str(self.db_path)) as db:
                 for model_class in self.document_models:
                     table_name = self._get_collection_name(model_class)
+                    if not table_name.isidentifier():
+                        raise StorageError(f"Invalid collection name: {table_name}")
+
                     await db.execute(
                         f'CREATE TABLE IF NOT EXISTS "{table_name}" (id TEXT PRIMARY KEY, doc JSON NOT NULL)'
                     )
@@ -73,7 +76,11 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
                     if hasattr(model_class, "Settings") and hasattr(model_class.Settings, "indexes"):
                         for idx in model_class.Settings.indexes:
                             if isinstance(idx, str):
-                                idx_name = f"idx_{table_name}_{idx.replace('.', '_')}"
+                                # Sanitize index path
+                                clean_idx = idx.replace(".", "_")
+                                if not clean_idx.isidentifier():
+                                    continue
+                                idx_name = f"idx_{table_name}_{clean_idx}"
                                 await db.execute(
                                     f'CREATE INDEX IF NOT EXISTS "{idx_name}" ON "{table_name}"(json_extract(doc, "$.{idx}"))'
                                 )
@@ -212,7 +219,7 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
             await db.commit()
         return document
 
-    async def insert_many(self, documents: List[T]) -> List[T]:
+    async def insert_many(self, documents: list[T]) -> list[T]:
         """Persists multiple documents in a single transaction."""
         if not documents:
             return []
@@ -231,13 +238,17 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
             await db.commit()
         return documents
 
-    async def find_one(self, model_class: type[T], query: Any) -> Optional[T]:
+    async def find_one(self, model_class: type[T], query: dict[str, Any]) -> Optional[T]:
         """Locates a single document matching the query."""
         table_name = self._get_collection_name(model_class)
+        if not table_name.isidentifier():
+            raise StorageError(f"Invalid collection name: {table_name}")
+
         where, params = self._build_where_clause(query)
 
         try:
             async with aiosqlite.connect(str(self.db_path)) as db:
+                # nosec: table_name validated with isidentifier()
                 cursor = await db.execute(f'SELECT doc FROM "{table_name}" WHERE {where} LIMIT 1', params)
                 row = await cursor.fetchone()
                 return self._dict_to_document(model_class, json.loads(row[0])) if row else None
@@ -248,24 +259,34 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
     async def find_many(
         self,
         model_class: type[T],
-        query: Any,
+        query: dict[str, Any],
         limit: int = 0,
         skip: int = 0,
         sort: Optional[Union[str, list[tuple[str, int]]]] = None,
     ) -> list[T]:
         """Locates multiple documents with support for pagination and sorting."""
         table_name = self._get_collection_name(model_class)
+        if not table_name.isidentifier():
+            raise StorageError(f"Invalid collection name: {table_name}")
+
         where, params = self._build_where_clause(query)
 
+        # nosec: table_name validated with isidentifier()
         sql = f'SELECT doc FROM "{table_name}" WHERE {where}'
 
         if sort:
             sql += " ORDER BY "
             if isinstance(sort, str):
-                sql += f"json_extract(doc, '$.{sort.lstrip('-')}') {'DESC' if sort.startswith('-') else 'ASC'}"
+                sort_field = sort.lstrip("-")
+                # Simple validation for sort field
+                if not all(part.isidentifier() for part in sort_field.split(".")):
+                    raise StorageError(f"Invalid sort field: {sort_field}")
+                sql += f"json_extract(doc, '$.{sort_field}') {'DESC' if sort.startswith('-') else 'ASC'}"
             else:
                 sort_parts = []
                 for field, direction in sort:
+                    if not all(part.isidentifier() for part in field.split(".")):
+                        continue
                     dir_str = "ASC" if direction > 0 else "DESC"
                     sort_parts.append(f"json_extract(doc, '$.{field}') {dir_str}")
                 sql += ", ".join(sort_parts)
@@ -287,21 +308,29 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
     async def delete_one(self, document: T) -> bool:
         """Deletes a single document."""
         table_name = self._get_collection_name(type(document))
+        if not table_name.isidentifier():
+            raise StorageError(f"Invalid collection name: {table_name}")
+
         async with aiosqlite.connect(str(self.db_path)) as db:
+            # nosec: table_name validated with isidentifier()
             await db.execute(f'DELETE FROM "{table_name}" WHERE id = ?', (str(document.id),))
             await db.commit()
         return True
 
-    async def delete_many(self, model_class: type[Document], query: Any) -> int:
+    async def delete_many(self, model_class: type[Document], query: dict[str, Any]) -> int:
         """Deletes all documents matching the query."""
         table_name = self._get_collection_name(model_class)
+        if not table_name.isidentifier():
+            raise StorageError(f"Invalid collection name: {table_name}")
+
         where, params = self._build_where_clause(query)
         async with aiosqlite.connect(str(self.db_path)) as db:
+            # nosec: table_name validated with isidentifier()
             cursor = await db.execute(f'DELETE FROM "{table_name}" WHERE {where}', params)
             await db.commit()
             return cursor.rowcount
 
-    async def update_one(self, document: T, update_query: Dict[str, Any]) -> T:
+    async def update_one(self, document: T, update_query: dict[str, Any]) -> T:
         # For SQLite adapter, we simplify by re-inserting the modified document
         # In a real ODM, this would handle $set, etc.
         return await self.insert_one(document)
@@ -316,20 +345,26 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
     def _patch_model(self, model_class: type[Document]) -> None:
         adapter = self
 
-        async def find_one_patch(query=None, **kwargs):
+        async def find_one_patch(query: Optional[dict[str, Any]] = None, **kwargs: Any) -> Optional[Document]:
             return await adapter.find_one(model_class, query or kwargs)
 
-        async def find_many_patch(query=None, limit=0, skip=0, sort=None, **kwargs):
+        async def find_many_patch(
+            query: Optional[dict[str, Any]] = None,
+            limit: int = 0,
+            skip: int = 0,
+            sort: Optional[Any] = None,
+            **kwargs: Any,
+        ) -> list[Document]:
             return await adapter.find_many(model_class, query or kwargs, limit, skip, sort)
 
-        async def get_patch(doc_id, **kwargs):
+        async def get_patch(doc_id: Any, **kwargs: Any) -> Optional[Document]:
             return await adapter.find_one(model_class, {"id": str(doc_id)})
 
-        async def create_patch(*args, **kwargs):
+        async def create_patch(*args: Any, **kwargs: Any) -> Document:
             instance = args[0] if args and isinstance(args[0], model_class) else model_class(**kwargs)
             return await adapter.insert_one(instance)
 
-        async def insert_many_patch(documents, **kwargs):
+        async def insert_many_patch(documents: list[Document], **kwargs: Any) -> list[Document]:
             return await adapter.insert_many(documents)
 
         # Patching methods onto the model class
@@ -337,11 +372,11 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
         model_class.find_many = staticmethod(find_many_patch)
         model_class.find_all = staticmethod(find_many_patch)
         model_class.get = staticmethod(get_patch)
-        model_class.create = create_patch
-        model_class.insert = lambda self_inst, **kwargs: adapter.insert_one(self_inst)
-        model_class.save = lambda self_inst, **kwargs: adapter.insert_one(self_inst)
-        model_class.delete = lambda self_inst, **kwargs: adapter.delete_one(self_inst)
-        model_class.update = lambda self_inst, **kwargs: adapter.insert_one(self_inst)
+        model_class.create = create_patch  # type: ignore
+        model_class.insert = lambda self_inst, **kwargs: adapter.insert_one(self_inst)  # type: ignore
+        model_class.save = lambda self_inst, **kwargs: adapter.insert_one(self_inst)  # type: ignore
+        model_class.delete = lambda self_inst, **kwargs: adapter.delete_one(self_inst)  # type: ignore
+        model_class.update = lambda self_inst, **kwargs: adapter.insert_one(self_inst)  # type: ignore
 
         # Patching static methods for bulk ops
         model_class.insert_many = staticmethod(insert_many_patch)
@@ -359,22 +394,22 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
             use_state_management: bool = False
             is_root: bool = True
             union_doc: Any = None
-            bson_encoders: Dict[Any, Any] = {}
+            bson_encoders: dict[Any, Any] = {}
             validation_schema: Any = None
             projection: Any = None
 
-            def __init__(self, m):
+            def __init__(self, m: type[Document]) -> None:
                 self.name = adapter._get_collection_name(m)
                 orig_settings = getattr(m, "Settings", None)
                 self.indexes = getattr(orig_settings, "indexes", []) if orig_settings else []
 
-            def get_collection(self):
+            def get_collection(self) -> Any:
                 return None
 
         proxy = SettingsProxy(model_class)
         model_class.get_settings = classmethod(lambda cls: proxy)
-        model_class.Settings = proxy
-        model_class._settings = proxy
+        model_class.Settings = proxy  # type: ignore
+        model_class._settings = proxy  # type: ignore
 
         # Patch motor_collection getter
         model_class.get_motor_collection = classmethod(lambda cls: None)
@@ -393,10 +428,10 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
     async def exists_async(self, key: str) -> bool:
         return False
 
-    async def list_keys_async(self, pattern: Optional[str] = None) -> List[str]:
+    async def list_keys_async(self, pattern: Optional[str] = None) -> list[str]:
         return []
 
-    async def find_async(self, query: Dict[str, Any]) -> List[Any]:
+    async def find_async(self, query: dict[str, Any]) -> list[Any]:
         return []
 
     async def clear_async(self) -> int:
@@ -454,7 +489,7 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
         result.sync_duration_seconds = (datetime.datetime.now(datetime.UTC) - start_time).total_seconds()
         return result
 
-    def get_sync_metadata(self) -> Dict[str, Any]:
+    def get_sync_metadata(self) -> dict[str, Any]:
         return {"provider": "sqlite", "supports_incremental": False}
 
     async def prepare_for_sync(self) -> bool:
@@ -463,14 +498,14 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
     async def cleanup_after_sync(self, sync_result: SyncResult) -> None:
         pass
 
-    async def get_data_for_sync(self, last_sync_timestamp: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
+    async def get_data_for_sync(self, last_sync_timestamp: Optional[datetime.datetime] = None) -> list[dict[str, Any]]:
         return []
 
     async def apply_sync_data(
         self,
-        sync_data: List[Dict[str, Any]],
+        sync_data: list[dict[str, Any]],
         conflict_resolution: SyncConflictResolution = SyncConflictResolution.NEWEST_WINS,
-    ) -> Tuple[int, List[Dict[str, Any]]]:
+    ) -> tuple[int, list[dict[str, Any]]]:
         return 0, []
 
     # --- IHealthCheck Implementation ---
@@ -486,7 +521,7 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
         except Exception:
             return False
 
-    def get_health_status(self) -> Dict[str, Any]:
+    def get_health_status(self) -> dict[str, Any]:
         return self._health_monitor.get_health_status()
 
     def get_last_health_check(self) -> datetime.datetime:

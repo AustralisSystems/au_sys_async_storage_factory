@@ -1,126 +1,306 @@
+from __future__ import annotations
+
 """
-Core Asynchronous Storage Factory
-Provides native AsyncSQLiteKV, AsyncSQLDB, and AsyncPostgres providers.
-Enforces the Zero-Hardcode Mandate.
+Core Asynchronous Storage Factory.
+
+Dynamically instantiates storage providers based on manifest-driven 
+configuration. Enforces lazy-loading, Zero-Hardcode Mandate, and 
+cross-category failover/tiering.
 """
 
 import logging
 import os
-from typing import Optional, Dict, Any
+import json
+import asyncio
+from pathlib import Path
+from typing import Optional, Dict, Any, List, Union, Type, TYPE_CHECKING
 from datetime import datetime, UTC
 
-from storage.interfaces.storage import IStorageProvider, StorageError
-from storage.async_sqlite_provider import AsyncSQLiteProvider
-from storage.async_sqldb_provider import AsyncSQLDBProvider
-from storage.async_postgres_provider import AsyncPostgresProvider
-from storage.admin import StorageAdminPortal
+from .config import get_storage_settings
+from .models import StorageBackendConfig, StorageManifest, StorageBackendType
+from .interfaces.storage import IStorageProvider, StorageError
+
+if TYPE_CHECKING:
+    from .interfaces.base_document_provider import IDocumentProvider
+    from .interfaces.base_vector_provider import IVectorProvider
+    from .interfaces.base_graph_provider import IGraphProvider
+    from .interfaces.base_blob_provider import BaseBlobProvider
 
 logger = logging.getLogger(__name__)
 
 
 class AsyncStorageFactory:
     """
-    Factory for instantiating core asynchronous storage providers.
-    Enforces the Zero-Hardcode Mandate.
+    Universal Factory for the Storage Factory sub-module.
+    Handles lifecycle, dynamic loading, and multi-tier orchestration.
     """
 
-    def __init__(self):
-        self._provider_type = os.getenv("ASYNC_STORAGE_PROVIDER", "sqlite_kv").lower()
-        self._providers: Dict[str, IStorageProvider] = {}
-        self._admin_portal: Optional[StorageAdminPortal] = None
+    def __init__(self, manifest_path: Optional[Path] = None):
+        self._settings = get_storage_settings()
+        self._manifest_path = manifest_path or Path(self._settings.storage_manifest_path)
+        self._manifest: StorageManifest = self._load_manifest()
 
-    async def get_provider(self, namespace: str = "default") -> IStorageProvider:
-        """Retrieves or creates a provider for the given namespace."""
-        if namespace not in self._providers:
-            self._providers[namespace] = await self._create_provider(namespace)
-        return self._providers[namespace]
+        # Instance caches
+        self._instances: dict[str, Any] = {}
+        self._lock = asyncio.Lock()
 
-    async def _create_provider(self, namespace: str) -> IStorageProvider:
-        if self._provider_type == "sqlite_kv":
-            return await self._create_sqlite_kv_provider(namespace)
-        elif self._provider_type == "sql_db":
-            return await self._create_sql_db_provider()
-        elif self._provider_type == "postgres":
-            return await self._create_postgres_provider()
-        else:
-            raise ValueError(f"Unknown ASYNC_STORAGE_PROVIDER: {self._provider_type}")
+        logger.info(f"AsyncStorageFactory initialized with manifest: {self._manifest_path}")
 
-    async def _create_sqlite_kv_provider(self, namespace: str) -> IStorageProvider:
-        base_path = os.getenv("ASYNC_SQLITE_KV_PATH", "./data/async_storage")
-        os.makedirs(base_path, exist_ok=True)
-        db_path = os.path.join(base_path, f"{namespace}.sqlite")
-        provider = AsyncSQLiteProvider(db_path=db_path)
-        await provider.initialize()
-        return provider
+    def _load_manifest(self) -> StorageManifest:
+        """Loads and validates the storage manifest."""
+        if not self._manifest_path.exists():
+            logger.warning(f"Manifest not found at {self._manifest_path}, using environment defaults.")
+            return self._build_manifest_from_env()
 
-    async def _create_postgres_provider(self) -> IStorageProvider:
-        url = os.getenv("ASYNC_POSTGRES_URL")
-        if not url:
-            raise ValueError("ASYNC_POSTGRES_URL environment variable required.")
-        provider = AsyncPostgresProvider(connection_url=url)
-        await provider.initialize()
-        return provider
+        try:
+            with open(self._manifest_path) as f:
+                data = json.load(f)
+                return StorageManifest(**data)
+        except Exception as e:
+            logger.error(f"Failed to parse storage manifest: {e}")
+            return self._build_manifest_from_env()
 
-    async def _create_sql_db_provider(self) -> IStorageProvider:
-        connection_url = os.getenv("ASYNC_SQLDB_URL")
-        if not connection_url:
-            raise ValueError("Environment variable ASYNC_SQLDB_URL is required.")
-        provider = AsyncSQLDBProvider(connection_url=connection_url)
-        await provider.initialize()
-        return provider
+    def _build_manifest_from_env(self) -> StorageManifest:
+        """Fallback: builds a manifest object from environment variables."""
+        backends = {}
 
-    def get_admin_portal(self) -> StorageAdminPortal:
-        """Returns the Storage Admin Portal for lifecycle and health management."""
-        if self._admin_portal is None:
-            self._admin_portal = StorageAdminPortal(self._providers)
-        return self._admin_portal
+        # SQLite Default
+        backends["sqlite"] = StorageBackendConfig(
+            name="sqlite",
+            type=StorageBackendType.RELATIONAL,
+            provider="sqlite",
+            connection_url=self._settings.async_sqlite_path,
+        )
 
-    async def create_snapshot(self, namespace: str = "default") -> str:
-        """Creates a point-in-time snapshot/backup of the provider data."""
-        provider = await self.get_provider(namespace)
-        if hasattr(provider, "create_backup"):
-            backup_dir = os.getenv("STORAGE_BACKUP_DIR", "./data/backups")
-            os.makedirs(backup_dir, exist_ok=True)
-            timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-            path = os.path.join(backup_dir, f"{namespace}_{timestamp}.bak")
-            success = await provider.create_backup(path)
-            if success:
-                return path
-        raise StorageError(f"Backup not supported for provider in namespace {namespace}")
+        # MongoDB Default
+        backends["mongodb"] = StorageBackendConfig(
+            name="mongodb",
+            type=StorageBackendType.DOCUMENT,
+            provider="mongodb",
+            connection_url=self._settings.mongodb_uri,
+            database=self._settings.mongodb_db,
+            failover_enabled=True,
+            secondary_backend="sqlite",
+        )
 
-    def get_db_session(self):
-        """
-        Bridge to the underlying transactional database session.
-        """
-        from storage.shared.services.config.database import get_db_session
+        # Local Blob Default
+        backends["local"] = StorageBackendConfig(
+            name="local",
+            type=StorageBackendType.BLOB,
+            provider="local",
+            options={"base_dir": self._settings.local_blob_path},
+        )
 
-        return get_db_session()
+        # Redis Vector Default
+        backends["redis"] = StorageBackendConfig(
+            name="redis",
+            type=StorageBackendType.VECTOR,
+            provider="redis",
+            host=self._settings.redis_host,
+            port=self._settings.redis_port,
+        )
 
-    def get_db_session_sync(self):
-        """
-        Bridge to the underlying transactional database session (sync).
-        """
-        from storage.shared.services.config.database import get_db_session_sync
+        # FalkorDB Graph Default
+        backends["falkordb"] = StorageBackendConfig(
+            name="falkordb",
+            type=StorageBackendType.GRAPH,
+            provider="falkordb",
+            host=self._settings.falkordb_host,
+            port=self._settings.falkordb_port,
+        )
 
-        return get_db_session_sync()
+        return StorageManifest(backends=backends)
+
+    # --- Provider Accessors ---
+
+    async def get_relational(self, name: Optional[str] = None) -> IStorageProvider:
+        name = name or self._manifest.default_relational
+        return await self._get_or_create_instance(name)
+
+    async def get_document(self, name: Optional[str] = None) -> IDocumentProvider:
+        name = name or self._manifest.default_document
+        return await self._get_or_create_instance(name)
+
+    async def get_blob(self, name: Optional[str] = None) -> BaseBlobProvider:
+        name = name or self._manifest.default_blob
+        return await self._get_or_create_instance(name)
+
+    async def get_vector(self, name: Optional[str] = None) -> IVectorProvider:
+        name = name or self._manifest.default_vector
+        return await self._get_or_create_instance(name)
+
+    async def get_graph(self, name: Optional[str] = None) -> IGraphProvider:
+        name = name or self._manifest.default_graph
+        return await self._get_or_create_instance(name)
+
+    async def get_transient(self, name: str = "memory") -> IStorageProvider:
+        return await self._get_or_create_instance(name)
+
+    # --- Internal Orchestration ---
+
+    async def _get_or_create_instance(self, name: str) -> Any:
+        async with self._lock:
+            if name in self._instances:
+                return self._instances[name]
+
+            config = self._manifest.backends.get(name)
+            if not config:
+                if name == "memory":
+                    config = StorageBackendConfig(name="memory", type=StorageBackendType.TRANSIENT, provider="memory")
+                else:
+                    raise StorageError(f"Backend '{name}' not defined in manifest.")
+
+            instance = await self._instantiate_provider(config)
+
+            # Wrap in failover if enabled
+            if config.failover_enabled and config.secondary_backend:
+                secondary = await self._get_or_create_instance_internal(config.secondary_backend)
+                instance = await self._wrap_failover(instance, secondary, config.type)
+
+            self._instances[name] = instance
+            return instance
+
+    async def _get_or_create_instance_internal(self, name: str) -> Any:
+        """Internal version without lock for recursion."""
+        if name in self._instances:
+            return self._instances[name]
+
+        config = self._manifest.backends.get(name)
+        if not config:
+            raise StorageError(f"Backend '{name}' not defined in manifest.")
+
+        instance = await self._instantiate_provider(config)
+        self._instances[name] = instance
+        return instance
+
+    async def _instantiate_provider(self, config: StorageBackendConfig) -> Any:
+        """Dynamic/Lazy loading of provider classes."""
+        provider = config.provider.lower()
+
+        if provider == "sqlite":
+            from .async_sqlite_provider import AsyncSQLiteProvider
+
+            conn_url = config.connection_url or self._settings.async_sqlite_path
+            db_path = str(conn_url).replace("sqlite+aiosqlite:///", "")
+            rel_instance = AsyncSQLiteProvider(db_path=db_path)
+            await rel_instance.initialize()
+            return rel_instance
+
+        if provider == "mongodb":
+            from .providers.async_mongodb_provider import AsyncMongoDBProvider
+
+            uri = config.connection_url or self._settings.mongodb_uri
+            db_name = config.database or self._settings.mongodb_db
+            doc_instance = AsyncMongoDBProvider(connection_uri=uri, database_name=db_name)
+            return doc_instance
+
+        if provider == "postgres":
+            from .async_postgres_provider import AsyncPostgresProvider
+
+            url = config.connection_url or str(self._settings.async_postgres_url)
+            pg_instance = AsyncPostgresProvider(connection_url=url)
+            await pg_instance.initialize()
+            return pg_instance
+
+        if provider == "local":
+            from .providers.local_blob import LocalBlobProvider
+
+            base_dir = str(config.options.get("base_dir", self._settings.local_blob_path))
+            return LocalBlobProvider(base_dir=base_dir)
+
+        if provider == "s3":
+            from .providers.aws_s3 import S3BlobProvider
+
+            bucket = str(config.options.get("bucket", self._settings.s3_bucket))
+            region = str(config.options.get("region", self._settings.aws_region))
+            return S3BlobProvider(bucket_name=bucket, region_name=region)
+
+        if provider == "redis":
+            from .providers.redis_vector import RedisVectorProvider
+
+            host = str(config.host or self._settings.redis_host)
+            port = int(config.port or self._settings.redis_port)
+            instance = RedisVectorProvider(host=host, port=port)
+            await instance.initialize()
+            return instance
+
+        if provider == "qdrant":
+            from .providers.qdrant_vector import QdrantVectorProvider
+
+            host = str(config.host or self._settings.qdrant_host)
+            instance = QdrantVectorProvider(host=host)
+            await instance.initialize()
+            return instance
+
+        if provider == "falkordb":
+            from .providers.falkordb_graph import FalkorDBGraphProvider
+
+            host = str(config.host or self._settings.falkordb_host)
+            port = int(config.port or self._settings.falkordb_port)
+            instance = FalkorDBGraphProvider(host=host, port=port)
+            await instance.initialize()
+            return instance
+
+        if provider == "neo4j":
+            from .providers.neo4j_graph import Neo4jGraphProvider
+
+            uri = str(config.connection_url or self._settings.neo4j_uri)
+            instance = Neo4jGraphProvider(uri=uri)
+            await instance.initialize()
+            return instance
+
+        if provider == "memory":
+            from .async_memory_provider import AsyncMemoryProvider
+
+            return AsyncMemoryProvider()
+
+        raise StorageError(f"Unsupported provider: {provider}")
+
+    async def _wrap_failover(self, primary: Any, secondary: Any, b_type: StorageBackendType) -> Any:
+        """Wraps providers in their respective failover orchestrators."""
+        if b_type == StorageBackendType.RELATIONAL:
+            from .relational_failover_provider import RelationalFailoverProvider
+
+            return RelationalFailoverProvider(primary=primary, secondary=secondary)
+
+        if b_type == StorageBackendType.DOCUMENT:
+            from .document_failover_provider import DocumentFailoverProvider
+
+            return DocumentFailoverProvider(primary=primary, secondary=secondary)
+
+        if b_type == StorageBackendType.BLOB:
+            from .providers.blob_failover_provider import BlobFailoverProvider
+
+            # Ensure BlobFailoverProvider is fully implemented or use a generic one
+            return BlobFailoverProvider(primary=primary, secondary=secondary)
+
+        if b_type == StorageBackendType.VECTOR:
+            from .providers.vector_failover_provider import VectorFailoverProvider
+
+            return VectorFailoverProvider(primary=primary, secondary=secondary)
+
+        if b_type == StorageBackendType.GRAPH:
+            from .providers.graph_failover_provider import GraphFailoverProvider
+
+            return GraphFailoverProvider(primary=primary, secondary=secondary)
+
+        return primary
 
     def get_factory_health(self) -> dict[str, Any]:
-        """
-        Returns health metadata for the factory itself.
-        """
         return {
-            "factory_initialized": True,
-            "provider_type_configured": self._provider_type,
-            "providers_active": list(self._providers.keys()),
+            "status": "active",
+            "manifest_path": str(self._manifest_path),
+            "active_instances": list(self._instances.keys()),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
 
 
-# Singleton instance
-_factory_instance = AsyncStorageFactory()
+# Singleton accessor
+_factory_instance: Optional[AsyncStorageFactory] = None
 
 
 def get_storage_factory() -> AsyncStorageFactory:
-    """
-    Returns the singleton AsyncStorageFactory instance.
-    """
+    global _factory_instance
+    if _factory_instance is None:
+        _factory_instance = AsyncStorageFactory()
     return _factory_instance

@@ -55,7 +55,7 @@ class DocumentFailoverProvider(IDocumentProvider, ISyncProvider, IHealthCheck):
         self._pending_sync = False
         self._last_sync_timestamp = None
 
-    async def initialize(self, document_models: Optional[List[Type[Any]]] = None) -> None:
+    async def initialize(self, document_models: Optional[list[type[Any]]] = None) -> None:
         """Initialize both providers."""
         await asyncio.gather(self.primary.initialize(document_models), self.secondary.initialize(document_models))
         self._health_monitor.update_health(True)
@@ -85,13 +85,14 @@ class DocumentFailoverProvider(IDocumentProvider, ISyncProvider, IHealthCheck):
                     logger.info("Primary provider seems recovered. Monitoring for failback.")
 
                 # Check if delay has passed
-                elapsed = (datetime.now(UTC) - self._last_primary_recovery).total_seconds()
-                if elapsed >= self.failback_delay:
-                    logger.info("Failback delay reached. Performing sync and failback.")
-                    await self._perform_failback_sync()
-                    self._active_provider = self.primary
-                    self._is_failing_over = False
-                    self._last_primary_recovery = None
+                if self._last_primary_recovery:
+                    elapsed = (datetime.now(UTC) - self._last_primary_recovery).total_seconds()
+                    if elapsed >= self.failback_delay:
+                        logger.info("Failback delay reached. Performing sync and failback.")
+                        await self._perform_failback_sync()
+                        self._active_provider = self.primary
+                        self._is_failing_over = False
+                        self._last_primary_recovery = None
             else:
                 self._last_primary_recovery = None
         except Exception:
@@ -117,7 +118,7 @@ class DocumentFailoverProvider(IDocumentProvider, ISyncProvider, IHealthCheck):
                 return await self.secondary.insert_one(document)
             raise StorageError(f"InsertOne failed on both providers: {e}")
 
-    async def insert_many(self, documents: List[Any]) -> List[Any]:
+    async def insert_many(self, documents: list[Any]) -> list[Any]:
         await self._check_primary_recovery()
         try:
             return await self._active_provider.insert_many(documents)
@@ -127,7 +128,7 @@ class DocumentFailoverProvider(IDocumentProvider, ISyncProvider, IHealthCheck):
                 return await self.secondary.insert_many(documents)
             raise StorageError(f"InsertMany failed on both providers: {e}")
 
-    async def find_one(self, model_class: Type[T], query: Dict[str, Any]) -> Optional[T]:
+    async def find_one(self, model_class: type[T], query: dict[str, Any]) -> Optional[T]:
         await self._check_primary_recovery()
         try:
             return await self._active_provider.find_one(model_class, query)
@@ -139,12 +140,12 @@ class DocumentFailoverProvider(IDocumentProvider, ISyncProvider, IHealthCheck):
 
     async def find_many(
         self,
-        model_class: Type[T],
-        query: Dict[str, Any],
+        model_class: type[T],
+        query: dict[str, Any],
         limit: int = 0,
         skip: int = 0,
         sort: Optional[Any] = None,
-    ) -> List[T]:
+    ) -> list[T]:
         await self._check_primary_recovery()
         try:
             return await self._active_provider.find_many(model_class, query, limit, skip, sort)
@@ -164,7 +165,7 @@ class DocumentFailoverProvider(IDocumentProvider, ISyncProvider, IHealthCheck):
                 return await self.secondary.delete_one(document)
             raise StorageError(f"DeleteOne failed on both providers: {e}")
 
-    async def delete_many(self, model_class: Type[Any], query: Dict[str, Any]) -> int:
+    async def delete_many(self, model_class: type[Any], query: dict[str, Any]) -> int:
         await self._check_primary_recovery()
         try:
             return await self._active_provider.delete_many(model_class, query)
@@ -174,7 +175,7 @@ class DocumentFailoverProvider(IDocumentProvider, ISyncProvider, IHealthCheck):
                 return await self.secondary.delete_many(model_class, query)
             raise StorageError(f"DeleteMany failed on both providers: {e}")
 
-    async def update_one(self, document: Any, update_query: Dict[str, Any]) -> Any:
+    async def update_one(self, document: Any, update_query: dict[str, Any]) -> Any:
         await self._check_primary_recovery()
         try:
             return await self._active_provider.update_one(document, update_query)
@@ -226,7 +227,7 @@ class DocumentFailoverProvider(IDocumentProvider, ISyncProvider, IHealthCheck):
                 return await self.secondary.exists_async(key)
             raise StorageError(f"Exists failed on both providers: {e}")
 
-    async def list_keys_async(self, pattern: Optional[str] = None) -> List[str]:
+    async def list_keys_async(self, pattern: Optional[str] = None) -> list[str]:
         await self._check_primary_recovery()
         try:
             return await self._active_provider.list_keys_async(pattern)
@@ -236,7 +237,7 @@ class DocumentFailoverProvider(IDocumentProvider, ISyncProvider, IHealthCheck):
                 return await self.secondary.list_keys_async(pattern)
             raise StorageError(f"ListKeys failed on both providers: {e}")
 
-    async def find_async(self, query: Dict[str, Any]) -> List[Any]:
+    async def find_async(self, query: dict[str, Any]) -> list[Any]:
         await self._check_primary_recovery()
         try:
             return await self._active_provider.find_async(query)
@@ -338,13 +339,19 @@ class DocumentFailoverProvider(IDocumentProvider, ISyncProvider, IHealthCheck):
     async def perform_deep_health_check(self) -> bool:
         p_health = False
         try:
-            p_health = await self.primary.perform_deep_health_check()
+            if isinstance(self.primary, IHealthCheck):
+                p_health = await self.primary.perform_deep_health_check()
+            else:
+                p_health = await self.primary.exists_async("__health_check__")
         except Exception:
             pass
 
         s_health = False
         try:
-            s_health = await self.secondary.perform_deep_health_check()
+            if isinstance(self.secondary, IHealthCheck):
+                s_health = await self.secondary.perform_deep_health_check()
+            else:
+                s_health = await self.secondary.exists_async("__health_check__")
         except Exception:
             pass
 

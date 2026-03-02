@@ -100,5 +100,5 @@ class ISyncProvider(IStorageProvider, ABC):
         self,
         sync_data: list[dict[str, Any]],
         conflict_resolution: SyncConflictResolution = SyncConflictResolution.NEWEST_WINS,
-    ) -> Tuple[int, list[dict[str, Any]]]:
+    ) -> tuple[int, list[dict[str, Any]]]:
         """Apply sync data asynchronously."""

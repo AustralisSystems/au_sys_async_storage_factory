@@ -9,6 +9,7 @@ providing a high-performance, async-native document storage solution.
 
 import logging
 from datetime import datetime, UTC
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Type, TypeVar, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -37,12 +38,12 @@ class AsyncMongoDBProvider(IDocumentProvider, ISyncProvider, IHealthCheck, IBack
     ):
         self.connection_uri = connection_uri
         self.database_name = database_name
-        self.client: Optional[AsyncIOMotorClient] = None
+        self.client: Optional[AsyncIOMotorClient[Any]] = None
         self.db: Optional[Any] = None
-        self.document_models: List[Type[Document]] = []
+        self.document_models: list[type[Document]] = []
         self._health_monitor = HealthMonitor()
 
-    async def initialize(self, document_models: Optional[List[Type[Document]]] = None) -> None:
+    async def initialize(self, document_models: Optional[list[type[Document]]] = None) -> None:
         """
         Initialize the MongoDB connection and Beanie ODM.
         """
@@ -73,7 +74,7 @@ class AsyncMongoDBProvider(IDocumentProvider, ISyncProvider, IHealthCheck, IBack
             logger.error(f"MongoDB InsertOne failed: {e}")
             raise StorageError(f"Insert failed: {e}")
 
-    async def insert_many(self, documents: List[T]) -> List[T]:
+    async def insert_many(self, documents: list[T]) -> list[T]:
         try:
             if not documents:
                 return []
@@ -84,7 +85,7 @@ class AsyncMongoDBProvider(IDocumentProvider, ISyncProvider, IHealthCheck, IBack
             logger.error(f"MongoDB InsertMany failed: {e}")
             raise StorageError(f"InsertMany failed: {e}")
 
-    async def find_one(self, model_class: Type[T], query: Dict[str, Any]) -> Optional[T]:
+    async def find_one(self, model_class: type[T], query: dict[str, Any]) -> Optional[T]:
         try:
             return await model_class.find_one(query)
         except Exception as e:
@@ -93,12 +94,12 @@ class AsyncMongoDBProvider(IDocumentProvider, ISyncProvider, IHealthCheck, IBack
 
     async def find_many(
         self,
-        model_class: Type[T],
-        query: Dict[str, Any],
+        model_class: type[T],
+        query: dict[str, Any],
         limit: int = 0,
         skip: int = 0,
         sort: Optional[Any] = None,
-    ) -> List[T]:
+    ) -> list[T]:
         try:
             q = model_class.find(query)
             if sort:
@@ -120,7 +121,7 @@ class AsyncMongoDBProvider(IDocumentProvider, ISyncProvider, IHealthCheck, IBack
             logger.error(f"MongoDB DeleteOne failed: {e}")
             raise StorageError(f"Delete failed: {e}")
 
-    async def delete_many(self, model_class: Type[T], query: Dict[str, Any]) -> int:
+    async def delete_many(self, model_class: type[T], query: dict[str, Any]) -> int:
         try:
             res = await model_class.find(query).delete()
             return res.deleted_count if res else 0
@@ -128,7 +129,7 @@ class AsyncMongoDBProvider(IDocumentProvider, ISyncProvider, IHealthCheck, IBack
             logger.error(f"MongoDB DeleteMany failed: {e}")
             raise StorageError(f"DeleteMany failed: {e}")
 
-    async def update_one(self, document: T, update_query: Dict[str, Any]) -> T:
+    async def update_one(self, document: T, update_query: dict[str, Any]) -> T:
         try:
             await document.update(update_query)
             return document
@@ -139,28 +140,106 @@ class AsyncMongoDBProvider(IDocumentProvider, ISyncProvider, IHealthCheck, IBack
     # --- IStorageProvider (KV) Implementation ---
 
     async def get_async(self, key: str) -> Optional[Any]:
-        # Implementation for generic KV on top of MongoDB
-        # Assuming a 'KeyValue' collection exists or using a generic approach
-        # For pure DocumentProvider, this might be left empty or implemented via a standard model
-        return None
+        """
+        Retrieves a value from MongoDB using a simple KV abstraction.
+        """
+        try:
+            if not self.db:
+                return None
+            collection = self.db["key_value_store"]
+            doc = await collection.find_one({"_id": key})
+            return doc.get("value") if doc else None
+        except Exception as e:
+            logger.error(f"MongoDB Get KV failed: {e}")
+            return None
 
     async def set_async(self, key: str, value: Any) -> bool:
-        return False
+        """
+        Sets a value in MongoDB using a simple KV abstraction.
+        """
+        try:
+            if not self.db:
+                return False
+            collection = self.db["key_value_store"]
+            await collection.replace_one({"_id": key}, {"value": value}, upsert=True)
+            return True
+        except Exception as e:
+            logger.error(f"MongoDB Set KV failed: {e}")
+            return False
 
     async def delete_async(self, key: str) -> bool:
-        return False
+        """
+        Deletes a key from MongoDB.
+        """
+        try:
+            if not self.db:
+                return False
+            collection = self.db["key_value_store"]
+            result = await collection.delete_one({"_id": key})
+            return (result.deleted_count > 0) if result else False
+        except Exception as e:
+            logger.error(f"MongoDB Delete KV failed: {e}")
+            return False
 
     async def exists_async(self, key: str) -> bool:
-        return False
+        """
+        Checks if a key exists in MongoDB.
+        """
+        try:
+            if not self.db:
+                return False
+            collection = self.db["key_value_store"]
+            count = await collection.count_documents({"_id": key}, limit=1)
+            return count > 0
+        except Exception as e:
+            logger.error(f"MongoDB Exists KV failed: {e}")
+            return False
 
-    async def list_keys_async(self, pattern: Optional[str] = None) -> List[str]:
-        return []
+    async def list_keys_async(self, pattern: Optional[str] = None) -> list[str]:
+        """
+        Lists keys matching the pattern.
+        """
+        try:
+            if not self.db:
+                return []
+            collection = self.db["key_value_store"]
+            query = {}
+            if pattern:
+                query = {"_id": {"$regex": pattern.replace("*", ".*")}}
 
-    async def find_async(self, query: Dict[str, Any]) -> List[Any]:
-        return []
+            cursor = collection.find(query, {"_id": 1})
+            return [doc["_id"] async for doc in cursor]
+        except Exception as e:
+            logger.error(f"MongoDB ListKeys failed: {e}")
+            return []
+
+    async def find_async(self, query: dict[str, Any]) -> list[Any]:
+        """
+        Finds values matching the query in the KV store.
+        """
+        try:
+            if not self.db:
+                return []
+            collection = self.db["key_value_store"]
+            cursor = collection.find(query)
+            return [doc.get("value") async for doc in cursor]
+        except Exception as e:
+            logger.error(f"MongoDB Find KV failed: {e}")
+            return []
 
     async def clear_async(self) -> int:
-        return 0
+        """
+        Clears the KV store.
+        """
+        try:
+            if not self.db:
+                return 0
+            collection = self.db["key_value_store"]
+            result = await collection.delete_many({})
+            return result.deleted_count if result else 0
+        except Exception as e:
+            logger.error(f"MongoDB Clear KV failed: {e}")
+            return 0
 
     # Required sync methods (fallbacks)
     def get(self, key: str) -> Optional[Any]:
@@ -225,7 +304,7 @@ class AsyncMongoDBProvider(IDocumentProvider, ISyncProvider, IHealthCheck, IBack
         result.sync_duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
         return result
 
-    def get_sync_metadata(self) -> Dict[str, Any]:
+    def get_sync_metadata(self) -> dict[str, Any]:
         return {"provider": "mongodb", "supports_incremental": True, "supports_bidirectional": True}
 
     async def prepare_for_sync(self) -> bool:
@@ -234,7 +313,7 @@ class AsyncMongoDBProvider(IDocumentProvider, ISyncProvider, IHealthCheck, IBack
     async def cleanup_after_sync(self, sync_result: SyncResult) -> None:
         pass
 
-    async def get_data_for_sync(self, last_sync_timestamp: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    async def get_data_for_sync(self, last_sync_timestamp: Optional[datetime] = None) -> list[dict[str, Any]]:
         sync_data = []
         for model_class in self.document_models:
             query = {}
@@ -251,12 +330,36 @@ class AsyncMongoDBProvider(IDocumentProvider, ISyncProvider, IHealthCheck, IBack
 
     async def apply_sync_data(
         self,
-        sync_data: List[Dict[str, Any]],
+        sync_data: list[dict[str, Any]],
         conflict_resolution: SyncConflictResolution = SyncConflictResolution.NEWEST_WINS,
-    ) -> Tuple[int, List[Dict[str, Any]]]:
+    ) -> tuple[int, list[dict[str, Any]]]:
         count = 0
-        conflicts = []
-        # Complex logic to map _model_class back to class and perform upsert
+        conflicts: list[dict[str, Any]] = []
+
+        for item in sync_data:
+            model_name = item.pop("_model_class", None)
+            if not model_name:
+                continue
+
+            model_class = next((m for m in self.document_models if m.__name__ == model_name), None)
+            if not model_class:
+                continue
+
+            try:
+                doc_id = item.get("_id") or item.get("id")
+                existing = await model_class.get(doc_id)
+
+                if existing:
+                    # Basic conflict resolution (stub)
+                    await existing.update({"$set": item})
+                else:
+                    new_doc = model_class(**item)
+                    await new_doc.insert()
+                count += 1
+            except Exception as e:
+                logger.error(f"Sync apply failed for {model_name}: {e}")
+                conflicts.append(item)
+
         return count, conflicts
 
     # --- IHealthCheck Implementation ---
@@ -273,7 +376,7 @@ class AsyncMongoDBProvider(IDocumentProvider, ISyncProvider, IHealthCheck, IBack
         except Exception:
             return False
 
-    def get_health_status(self) -> Dict[str, Any]:
+    def get_health_status(self) -> dict[str, Any]:
         return self._health_monitor.get_health_status()
 
     def get_last_health_check(self) -> datetime:
@@ -324,7 +427,7 @@ class AsyncMongoDBProvider(IDocumentProvider, ISyncProvider, IHealthCheck, IBack
                     if clear_existing:
                         await self.delete_many(model_class, {})
 
-                    with open(file_path, "r", encoding="utf-8") as f:
+                    with open(file_path, encoding="utf-8") as f:
                         data = json.load(f)
 
                     docs = [model_class(**item) for item in data]

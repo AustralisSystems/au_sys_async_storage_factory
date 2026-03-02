@@ -1,0 +1,163 @@
+# Python
+__pycache__
+/**/__pycache__/**
+**/*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+
+# MyPy cache
+.mypy_cache/
+.ruff_cache/
+
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+_archive/
+backups/
+*.bak
+*.tmp
+
+# Redis
+dump.rdb
+
+# Documentation builds
+docs/_build/
+site/
+
+# AI code cli and ide
+.agent-prompts
+.claude
+.codex
+.cursor
+.gemini
+.git
+.github
+.grok
+.mypy_cache
+.playwright-mcp
+.pytest_cache
+.qwen
+.ruff_cache
+.venv
+.vscode
+
+# Playwright
+.playwright-mcp
+
+
+# Node.js
+node_modules/
+package-lock.json
+
+
+# node_modules
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp.*
+.pnp.js
+
+# TypeScript
+*.tsbuildinfo
+dist/**
+build/**
+
+# Next.js
+.next/
+out/
+
+tmp/
+temp/
+*.tmp
+*.temp
+
+
+# Assuming you have a data directory for local databases, you can ignore it entirely
+data/**
+
+# Local DBs - keep them out of the repo (these are runtime artifacts)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+
+# Encryption keys and secrets - NEVER commit encryption keys
+*.key
+**/*.key
+**/secrets/**
+**/.key
+config/secrets/**
+*.fernet.key
+*.encryption.key
+
+# Reference Repositories
+.github_references/
+reference_repos/
+docs/implementation/instructions/reference_repos/
+
+validation/results/
+_ops
+
+# Git rewrite artifacts
+.git-rewrite/
+
+# AU-SYS Sovereign Sub-Ecosystems (Strict Git Independence)
+agentic_code_engine/
+
+# Reference Libraries and Docs
+_reference_lib/
+docs/implementation/instructions/reference_lib/

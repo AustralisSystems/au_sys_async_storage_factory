@@ -29,9 +29,7 @@ class Settings(BaseSettings):
 
     # --- Core Application ---
     app_name: str = Field("Digital Angels API", env="APP_NAME")
-    app_description: str = Field(
-        "Digital Angels Core API - AI Automation Platform", env="APP_DESCRIPTION"
-    )
+    app_description: str = Field("Digital Angels Core API - AI Automation Platform", env="APP_DESCRIPTION")
     app_version: str = Field("2.0.0", env="APP_VERSION")
     debug: bool = Field(False, env="DEBUG")
     environment: str = Field("production", env="ENVIRONMENT")
@@ -40,12 +38,8 @@ class Settings(BaseSettings):
     log_level: str = Field("INFO", env="LOG_LEVEL")
 
     # --- Security & Auth ---
-    secret_key: str = Field(
-        "fallback_secret_key_change_in_production", env="SECRET_KEY"
-    )
-    jwt_secret_key: str = Field(
-        "fallback_jwt_secret_key_change_in_production", env="JWT_SECRET_KEY"
-    )
+    secret_key: str = Field("fallback_secret_key_change_in_production", env="SECRET_KEY")
+    jwt_secret_key: str = Field("fallback_jwt_secret_key_change_in_production", env="JWT_SECRET_KEY")
     jwt_algorithm: str = Field("HS256", env="JWT_ALGORITHM")
     access_token_expire_minutes: int = Field(1440, env="ACCESS_TOKEN_EXPIRE_MINUTES")
 
@@ -86,8 +80,8 @@ class Settings(BaseSettings):
         env_file_encoding = "utf-8"
         extra = "ignore"  # Ignore extra environment variables to prevent validation errors
 
-
     @validator("debug", "apex_enabled", "knowledge_graph_enabled", "standalone_mode", "settings_auto_reload", pre=True)
+    @classmethod
     def parse_bools(cls, v: Any) -> bool:
         if isinstance(v, bool):
             return v
@@ -99,7 +93,7 @@ class Settings(BaseSettings):
         return self.environment.lower() in ["production", "prod", "standalone"]
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
     """Get the cached application settings."""
     return Settings()

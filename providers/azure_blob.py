@@ -1,9 +1,11 @@
 import os
 import sys
-from typing import Optional, Union, AsyncIterator, Any
-from datetime import datetime, timedelta, timezone, UTC
+import json
+import logging
+import zipfile
+from typing import Optional, Union, AsyncIterator, Any, Dict
+from datetime import datetime, timedelta, UTC
 
-# Ensure absolute imports work correctly
 from storage.shared.observability.logger_factory import get_component_logger
 from storage.interfaces.base_blob_provider import BaseBlobProvider
 from storage.security.compliance import (
@@ -15,7 +17,7 @@ from storage.security.compliance import (
 
 # Force UTF-8 stdout encoding for Python CLIs
 if sys.stdout.encoding != "utf-8" and hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore
 
 try:
     from azure.storage.blob.aio import BlobServiceClient
@@ -24,10 +26,10 @@ try:
     AZURE_AVAILABLE = True
 except ImportError:
     AZURE_AVAILABLE = False
-    # Use Any for mypy compliance when package is missing
-    BlobServiceClient = Any
-    ResourceExistsError = Exception
-    ResourceNotFoundError = Exception
+    # Use generic types for mypy compliance when package is missing
+    BlobServiceClient = Any  # type: ignore
+    ResourceExistsError = Exception  # type: ignore
+    ResourceNotFoundError = Exception  # type: ignore
 
 logger = get_component_logger("storage", "azure_blob")
 
@@ -46,20 +48,16 @@ class AzureBlobProvider(BaseBlobProvider):
         self.container_name = container_name
         self.service_client = BlobServiceClient.from_connection_string(connection_string)
         self.container_client = self.service_client.get_container_client(container_name)
-
-        # Store account key for SAS generation
         self.account_key = account_key
+
         if not self.account_key:
-            # Attempt to parse account key from connection string
             try:
-                # Connection string format: DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;EndpointSuffix=...
                 parts = dict(item.split("=", 1) for item in connection_string.split(";") if "=" in item)
                 self.account_key = parts.get("AccountKey")
             except Exception as e:
                 logger.debug(f"Failed to parse account key from connection string: {e}")
 
     async def _ensure_container(self) -> None:
-        """Idempotent container creation."""
         try:
             await self.container_client.create_container()
         except ResourceExistsError:
@@ -73,12 +71,10 @@ class AzureBlobProvider(BaseBlobProvider):
         encryption_context: Optional[dict[str, str]] = None,
     ) -> bool:
         await self._ensure_container()
-
         if isinstance(data, str):
             data = data.encode("utf-8")
 
         blob_client = self.container_client.get_blob_client(key)
-
         try:
             content_settings = None
             if content_type:
@@ -96,7 +92,8 @@ class AzureBlobProvider(BaseBlobProvider):
         blob_client = self.container_client.get_blob_client(key)
         try:
             download_stream = await blob_client.download_blob()
-            return await download_stream.readall()
+            data: bytes = await download_stream.readall()
+            return data
         except ResourceNotFoundError:
             return None
         except Exception as e:
@@ -126,9 +123,7 @@ class AzureBlobProvider(BaseBlobProvider):
 
         try:
             blob_client = self.container_client.get_blob_client(key)
-
             if not self.account_key:
-                # Try to fallback to credential object if available
                 if hasattr(self.service_client, "credential") and hasattr(
                     self.service_client.credential, "account_key"
                 ):
@@ -153,7 +148,6 @@ class AzureBlobProvider(BaseBlobProvider):
     async def list_blobs(
         self, prefix: Optional[str] = None, limit: Optional[int] = None
     ) -> AsyncIterator[dict[str, Any]]:
-        """Async iterator for Azure blobs."""
         count = 0
         try:
             async for blob in self.container_client.list_blobs(name_starts_with=prefix):
@@ -170,11 +164,82 @@ class AzureBlobProvider(BaseBlobProvider):
         except Exception as e:
             logger.error(f"Azure List Blobs Failed: {e}")
 
+    # --- IBackupProvider Implementation ---
+
+    async def create_backup(self, backup_path: str, metadata: Optional[dict[str, Any]] = None) -> bool:
+        """Creates a Sovereign local ZIP backup of the Azure container."""
+        from pathlib import Path
+
+        try:
+            target = Path(backup_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+
+            with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
+                async for blob in self.list_blobs():
+                    key = blob["name"]
+                    data = await self.download(key)
+                    if data:
+                        zf.writestr(key, data)
+
+                if metadata:
+                    zf.writestr("backup_metadata.json", json.dumps(metadata, indent=2))
+
+            logger.info(f"Azure Backup created: {backup_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Azure Backup Failed: {e}")
+            return False
+
+    async def restore_backup(self, backup_path: str, clear_existing: bool = False) -> bool:
+        """Restores Azure container from a sovereign ZIP backup."""
+        try:
+            await self._ensure_container()
+            if clear_existing:
+                async for blob in self.list_blobs():
+                    await self.delete(blob["name"])
+
+            with zipfile.ZipFile(backup_path, "r") as zf:
+                for name in zf.namelist():
+                    if name == "backup_metadata.json":
+                        continue
+                    data = zf.read(name)
+                    await self.upload(name, data)
+
+            logger.info(f"Azure Restore completed from {backup_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Azure Restore Failed: {e}")
+            return False
+
+    async def validate_backup(self, backup_path: str) -> dict[str, Any]:
+        """Validates the integrity of an Azure ZIP backup."""
+        try:
+            with zipfile.ZipFile(backup_path, "r") as zf:
+                bad_file = zf.testzip()
+                if bad_file:
+                    return {"valid": False, "error": f"Bad CRC for file {bad_file}"}
+                return {"valid": True, "file_count": len(zf.namelist())}
+        except Exception as e:
+            return {"valid": False, "error": str(e)}
+
+    async def list_backups(self, backup_dir: str) -> dict[str, dict[str, Any]]:
+        """Lists available Azure backups locally."""
+        from pathlib import Path
+
+        backups = {}
+        path = Path(backup_dir)
+        if not path.exists():
+            return {}
+        for item in path.glob("azure_backup_*.zip"):
+            stat = item.stat()
+            backups[item.name] = {
+                "path": str(item),
+                "size_bytes": stat.st_size,
+                "created_at": datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(),
+            }
+        return backups
+
     def validate_compliance(self) -> ValidationResult:
-        """
-        Validates configuration against NIST SP 800-175B.
-        Azure Blob Storage defaults to TLS 1.2+ and AES-256 for data at rest.
-        """
         return StorageCompliance.validate_nist_800_175b(
             encryption=EncryptionStandard.AES_256_GCM,
             transport=TransportSecurity.TLS_1_2,

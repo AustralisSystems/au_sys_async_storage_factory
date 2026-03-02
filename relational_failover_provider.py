@@ -233,7 +233,7 @@ class RelationalFailoverProvider(IRelationalProvider, ISyncProvider):
         self,
         sync_data: list[dict[str, Any]],
         conflict_resolution: SyncConflictResolution = SyncConflictResolution.NEWEST_WINS,
-    ) -> Tuple[int, list[dict[str, Any]]]:
+    ) -> tuple[int, list[dict[str, Any]]]:
         if isinstance(self._active_provider, ISyncProvider):
             return await self._active_provider.apply_sync_data(sync_data, conflict_resolution)
         return 0, []

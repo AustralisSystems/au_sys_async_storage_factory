@@ -1,118 +1,67 @@
-"""
-Storage configuration utilities.
+from __future__ import annotations
 
-Central credential management functions for storage providers.
+"""
+Storage Configuration Manager.
+
+Centralizes all storage-related settings using Pydantic Settings.
+Enforces the Zero-Hardcode Mandate by resolving all values from 
+environment variables with appropriate defaults.
 """
 
 import os
-from enum import Enum
-from functools import lru_cache
-from typing import Optional
-
-from pydantic import BaseModel, Field, SecretStr
-
-from storage.shared.services.config.settings import get_settings
+from typing import Optional, Dict, Any
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, SecretStr, PostgresDsn, RedisDsn, HttpUrl
 
 
-class VectorStoreType(str, Enum):
-    """Supported vector store backends."""
-
-    REDIS = "redis"
-    QDRANT = "qdrant"
-
-
-class VectorDistanceMetric(str, Enum):
-    """Distance metrics for vector search."""
-
-    COSINE = "cosine"
-    L2 = "l2"
-    IP = "ip"
-
-
-class VectorStoreConfig(BaseModel):
-    """Configuration for vector storage."""
-
-    type: VectorStoreType = Field(default=VectorStoreType.REDIS)
-    host: str = Field(default="localhost")
-    port: int = Field(default=6379)
-    password: Optional[SecretStr] = None
-    collection_name: str = Field(default="vectors")
-    dimension: int = Field(default=1536)  # Default for OpenAI embeddings
-    metric: VectorDistanceMetric = Field(default=VectorDistanceMetric.COSINE)
-    api_key: Optional[SecretStr] = None
-
-
-class GraphStoreType(str, Enum):
-    """Supported graph store backends."""
-
-    FALKORDB = "falkordb"
-    NEO4J = "neo4j"
-
-
-class GraphStoreConfig(BaseModel):
-    """Configuration for graph storage."""
-
-    type: GraphStoreType = Field(default=GraphStoreType.FALKORDB)
-    host: str = Field(default="localhost")
-    port: int = Field(default=6379)
-    password: Optional[SecretStr] = None
-    username: Optional[str] = None
-    database: str = Field(default="graph")
-    api_key: Optional[SecretStr] = None
-
-
-@lru_cache
-def get_admin_credentials() -> tuple[str, str, str]:
+class StorageSettings(BaseSettings):
     """
-    Get admin credentials from central configuration.
-
-    SINGLE SOURCE OF TRUTH for admin credentials across the entire application.
-    All components MUST use this function instead of directly calling os.getenv().
-
-    Returns:
-        Tuple of (username, password, email)
-
-    Raises:
-        ValueError: If credentials cannot be determined
+    Settings for the Storage Factory sub-module.
+    Strictly adheres to Zero-Hardcode Mandate.
     """
-    try:
-        # Priority 1: Try to get from validated Settings (preferred)
-        settings = get_settings()
-        username = settings.admin_username or os.getenv("ADMIN_USERNAME", "admin")
-        password = settings.admin_password or os.getenv("ADMIN_PASSWORD", "admin123!")
-        # If ADMIN_EMAIL is not provided, default sensibly:
-        # - If ADMIN_USERNAME already looks like an email, treat it as the email.
-        # - Otherwise, fall back to a deterministic local domain.
-        email = os.getenv("ADMIN_EMAIL")
-        if not email:
-            email = username if "@" in username else f"{username}@application.local"
 
-        return (username, password, email)
-    except Exception:
-        # Priority 2: Environment variables (for initialization before Settings loads)
-        username = os.getenv("ADMIN_USERNAME", os.getenv("ADMIN_USERNAME", "admin"))
-        password = os.getenv("ADMIN_PASSWORD", os.getenv("ADMIN_PASSWORD", "admin123!"))
-        email = os.getenv("ADMIN_EMAIL")
-        if not email:
-            email = username if "@" in username else f"{username}@application.local"
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-        return (username, password, email)
+    # General
+    app_mode: str = Field(default="development")
+    storage_manifest_path: str = Field(default="storage/configs/storage_backends.json")
+
+    # Relational
+    async_sqlite_path: str = Field(default="sqlite+aiosqlite:///data/storage/default.sqlite")
+    async_postgres_url: Optional[PostgresDsn] = None
+    async_sqldb_url: Optional[str] = None
+
+    # Document
+    mongodb_uri: str = Field(default="mongodb://localhost:27017")
+    mongodb_db: str = Field(default="ace_storage")
+
+    # Blob
+    local_blob_path: str = Field(default="./data/blobs")
+    s3_bucket: str = Field(default="ace-blobs")
+    aws_region: str = Field(default="us-east-1")
+
+    # Vector
+    redis_host: str = Field(default="localhost")
+    redis_port: int = Field(default=6379)
+    qdrant_host: str = Field(default="localhost")
+
+    # Graph
+    falkordb_host: str = Field(default="localhost")
+    falkordb_port: int = Field(default=6379)
+    neo4j_uri: str = Field(default="bolt://localhost:7687")
+
+    # Admin
+    admin_username: str = Field(default="admin")
+    admin_password: SecretStr = Field(default="admin123!")
+    storage_backup_dir: str = Field(default="./data/backups")
 
 
-def get_credential_with_priority(env_var_name: str, required_in_production: bool = True) -> str | None:
-    """
-    Get credential from environment variable with priority handling.
+_settings: Optional[StorageSettings] = None
 
-    Args:
-        env_var_name: Name of the environment variable
-        required_in_production: Whether this credential is required in production
 
-    Returns:
-        Credential value or None if not found
-    """
-    value = os.getenv(env_var_name)
-    if not value and required_in_production:
-        settings = get_settings()
-        if settings.app_mode == "production":
-            raise ValueError(f"Required credential {env_var_name} not set in production mode")
-    return value
+def get_storage_settings() -> StorageSettings:
+    """Singleton accessor for storage settings."""
+    global _settings
+    if _settings is None:
+        _settings = StorageSettings()
+    return _settings

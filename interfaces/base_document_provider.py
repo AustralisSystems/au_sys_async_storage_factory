@@ -11,18 +11,20 @@ from abc import ABC, abstractmethod
 from typing import Any, Optional, Dict, List, Type, TypeVar
 
 from .storage import IStorageProvider
+from .health import IHealthCheck
+from .backup import IBackupProvider
 
 T = TypeVar("T")
 
 
-class IDocumentProvider(IStorageProvider, ABC):
+class IDocumentProvider(IStorageProvider, IHealthCheck, IBackupProvider, ABC):
     """
     Interface for Document/NoSQL storage providers.
     Extends IStorageProvider to include document-specific operations.
     """
 
     @abstractmethod
-    async def initialize(self, document_models: Optional[List[Type[Any]]] = None) -> None:
+    async def initialize(self, document_models: Optional[list[type[Any]]] = None) -> None:
         """
         Initialize the provider, establishing connections and ensuring schema existence.
 
@@ -37,13 +39,13 @@ class IDocumentProvider(IStorageProvider, ABC):
         """
 
     @abstractmethod
-    async def insert_many(self, documents: List[Any]) -> List[Any]:
+    async def insert_many(self, documents: list[Any]) -> list[Any]:
         """
         Persist multiple documents.
         """
 
     @abstractmethod
-    async def find_one(self, model_class: Type[T], query: Dict[str, Any]) -> Optional[T]:
+    async def find_one(self, model_class: type[T], query: dict[str, Any]) -> Optional[T]:
         """
         Locate a single document matching the query.
         """
@@ -51,12 +53,12 @@ class IDocumentProvider(IStorageProvider, ABC):
     @abstractmethod
     async def find_many(
         self,
-        model_class: Type[T],
-        query: Dict[str, Any],
+        model_class: type[T],
+        query: dict[str, Any],
         limit: int = 0,
         skip: int = 0,
         sort: Optional[Any] = None,
-    ) -> List[T]:
+    ) -> list[T]:
         """
         Locate multiple documents with support for pagination and sorting.
         """
@@ -68,13 +70,13 @@ class IDocumentProvider(IStorageProvider, ABC):
         """
 
     @abstractmethod
-    async def delete_many(self, model_class: Type[Any], query: Dict[str, Any]) -> int:
+    async def delete_many(self, model_class: type[Any], query: dict[str, Any]) -> int:
         """
         Delete all documents matching the query.
         """
 
     @abstractmethod
-    async def update_one(self, document: Any, update_query: Dict[str, Any]) -> Any:
+    async def update_one(self, document: Any, update_query: dict[str, Any]) -> Any:
         """
         Update a single document.
         """

@@ -1,7 +1,14 @@
 import sys
 from typing import Optional, Union, AsyncIterator, Any
-import aioboto3
-from botocore.exceptions import ClientError
+
+try:
+    import aioboto3
+    from botocore.exceptions import ClientError
+
+    HAS_S3_LIBS = True
+except ImportError:
+    HAS_S3_LIBS = False
+    ClientError = Exception  # type: ignore
 
 from storage.shared.observability.logger_factory import get_component_logger
 from storage.interfaces.base_blob_provider import BaseBlobProvider
@@ -172,6 +179,106 @@ class S3BlobProvider(BaseBlobProvider):
             except Exception as e:
                 logger.error(f"S3 List Blobs Failed: {e}")
                 break
+
+    # --- IBackupProvider Implementation ---
+
+    async def create_backup(self, backup_path: str, metadata: Optional[dict[str, Any]] = None) -> bool:
+        """
+        Creates a 'Sovereign' backup of the S3 bucket by downloading all blobs
+        and packaging them into a compressed archive.
+        """
+        import zipfile
+        from pathlib import Path
+        import io
+
+        try:
+            target = Path(backup_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+
+            async with self._get_client() as client:
+                with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
+                    # List and download all objects
+                    async for blob in self.list_blobs():
+                        key = blob["name"]
+                        response = await client.get_object(Bucket=self.bucket, Key=key)
+                        async with response["Body"] as stream:
+                            data = await stream.read()
+                            zf.writestr(key, data)
+
+                    # Add metadata
+                    if metadata:
+                        import json
+
+                        zf.writestr("backup_metadata.json", json.dumps(metadata))
+
+            logger.info(f"S3 Backup created: {backup_path}")
+            return True
+        except Exception as e:
+            logger.error(f"S3 Backup Failed: {e}")
+            return False
+
+    async def restore_backup(self, backup_path: str, clear_existing: bool = False) -> bool:
+        """
+        Restores S3 bucket from a sovereign backup archive.
+        """
+        import zipfile
+        from pathlib import Path
+
+        try:
+            if clear_existing:
+                async for blob in self.list_blobs():
+                    await self.delete(blob["name"])
+
+            async with self._get_client() as client:
+                with zipfile.ZipFile(backup_path, "r") as zf:
+                    for name in zf.namelist():
+                        if name == "backup_metadata.json":
+                            continue
+                        data = zf.read(name)
+                        await client.put_object(Bucket=self.bucket, Key=name, Body=data)
+
+            logger.info(f"S3 Restore completed from {backup_path}")
+            return True
+        except Exception as e:
+            logger.error(f"S3 Restore Failed: {e}")
+            return False
+
+    async def validate_backup(self, backup_path: str) -> dict[str, Any]:
+        """
+        Validates the integrity of an S3 backup archive.
+        """
+        import zipfile
+
+        try:
+            with zipfile.ZipFile(backup_path, "r") as zf:
+                # Test archive integrity
+                bad_file = zf.testzip()
+                if bad_file:
+                    return {"valid": False, "error": f"Bad CRC for file {bad_file}"}
+                return {"valid": True, "file_count": len(zf.namelist())}
+        except Exception as e:
+            return {"valid": False, "error": str(e)}
+
+    async def list_backups(self, backup_dir: str) -> dict[str, dict[str, Any]]:
+        """
+        Lists available S3 backups in a local directory.
+        """
+        from pathlib import Path
+        from datetime import datetime, UTC
+
+        backups = {}
+        path = Path(backup_dir)
+        if not path.exists():
+            return {}
+
+        for item in path.glob("s3_backup_*.zip"):
+            stat = item.stat()
+            backups[item.name] = {
+                "path": str(item),
+                "size_bytes": stat.st_size,
+                "created_at": datetime.fromtimestamp(stat.st_ctime, UTC).isoformat(),
+            }
+        return backups
 
     def validate_compliance(self) -> ValidationResult:
         """

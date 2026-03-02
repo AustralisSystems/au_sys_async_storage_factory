@@ -10,24 +10,18 @@ Blob Storage Provider to ensure data availability and tier-syncing.
 import asyncio
 import logging
 from datetime import datetime, UTC
-from typing import Any, AsyncIterator, Optional, Union
+from typing import Any, AsyncIterator, Optional, Union, Dict, List
 
 from ..interfaces.base_blob_provider import BaseBlobProvider
 from ..interfaces.sync import ISyncProvider, SyncResult, SyncDirection, SyncConflictResolution
 from ..interfaces.health import IHealthCheck, HealthMonitor
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("storage.blob.failover")
 
 
 class BlobFailoverProvider(BaseBlobProvider, ISyncProvider, IHealthCheck):
     """
     Orchestrator for failover and data synchronization between two blob providers.
-
-    Attributes:
-        primary: The primary storage provider (e.g., AWS S3)
-        secondary: The secondary/failover storage provider (e.g., Local Volume)
-        failover_threshold: Number of failures before switching to secondary
-        failback_delay: Time in seconds to wait before attempting failback after recovery
     """
 
     def __init__(
@@ -45,12 +39,12 @@ class BlobFailoverProvider(BaseBlobProvider, ISyncProvider, IHealthCheck):
         self._active_provider = primary
         self._is_failing_over = False
         self._primary_failures = 0
-        self._last_primary_recovery = None
+        self._last_primary_recovery: Optional[datetime] = None
         self._health_monitor = HealthMonitor()
 
         # Sync state
         self._pending_sync = False
-        self._last_sync_timestamp = None
+        self._last_sync_timestamp: Optional[datetime] = None
 
     async def _handle_primary_failure(self, error: Exception) -> None:
         """Handle a failure in the primary provider."""
@@ -164,9 +158,6 @@ class BlobFailoverProvider(BaseBlobProvider, ISyncProvider, IHealthCheck):
             raise e
 
     def list_blobs(self, prefix: Optional[str] = None, limit: Optional[int] = None) -> AsyncIterator[dict[str, Any]]:
-        # This is a bit trickier because it returns an AsyncIterator.
-        # For simplicity, we delegate to active provider.
-        # If it fails during iteration, it's harder to failover mid-stream.
         return self._active_provider.list_blobs(prefix, limit)
 
     def validate_compliance(self) -> Any:
@@ -253,3 +244,17 @@ class BlobFailoverProvider(BaseBlobProvider, ISyncProvider, IHealthCheck):
 
     def get_last_health_check(self) -> datetime:
         return self._health_monitor.get_last_health_check()
+
+    # --- IBackupProvider Implementation ---
+
+    async def create_backup(self, backup_path: str, metadata: Optional[dict[str, Any]] = None) -> bool:
+        return await self._active_provider.create_backup(backup_path, metadata)
+
+    async def restore_backup(self, backup_path: str, clear_existing: bool = False) -> bool:
+        return await self._active_provider.restore_backup(backup_path, clear_existing)
+
+    async def validate_backup(self, backup_path: str) -> dict[str, Any]:
+        return await self._active_provider.validate_backup(backup_path)
+
+    async def list_backups(self, backup_dir: str) -> dict[str, dict[str, Any]]:
+        return await self._active_provider.list_backups(backup_dir)

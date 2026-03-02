@@ -28,7 +28,7 @@ class IRelationalProvider(IStorageProvider, IHealthCheck, IBackupProvider, ABC):
         """
 
     @abstractmethod
-    async def execute_raw_sql(self, sql: str, params: Optional[Dict[str, Any]] = None) -> Any:
+    async def execute_raw_sql(self, sql: str, params: Optional[dict[str, Any]] = None) -> Any:
         """
         Execute a raw SQL query asynchronously.
         """

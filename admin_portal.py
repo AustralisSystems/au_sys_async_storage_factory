@@ -26,7 +26,7 @@ class AdminPortalService:
     def __init__(self):
         self.factory = get_storage_factory()
 
-    async def get_all_providers_health(self) -> List[Dict[str, Any]]:
+    async def get_all_providers_health(self) -> list[dict[str, Any]]:
         """
         Retrieves health status for all registered and active providers.
         """
@@ -41,7 +41,7 @@ class AdminPortalService:
 
         return providers
 
-    async def list_blob_containers(self, provider_type: str = "local") -> List[str]:
+    async def list_blob_containers(self, provider_type: str = "local") -> list[str]:
         """
         Lists available containers/buckets for a specific blob provider.
         """
@@ -56,9 +56,8 @@ class AdminPortalService:
         """
         logger.info(f"Admin triggered sync from {source} to {target}")
         # Implementation depends on ISyncProvider support
-        pass
 
-    async def get_storage_stats(self) -> Dict[str, Any]:
+    async def get_storage_stats(self) -> dict[str, Any]:
         """
         Aggregates usage statistics across all storage backends.
         """

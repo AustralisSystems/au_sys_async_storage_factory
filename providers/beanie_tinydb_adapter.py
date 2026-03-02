@@ -9,6 +9,7 @@ enabling MongoDB -> TinyDB fallback capability.
 
 import asyncio
 import logging
+import json
 from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any, Optional, TypeVar, Type, List, Dict, Tuple, Union
@@ -44,7 +45,7 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.encryption_key = encryption_key
-        self.document_models: List[Type[Document]] = []
+        self.document_models: list[type[Document]] = []
 
         # Initialize TinyDB
         self.db = TinyDB(str(self.db_path))
@@ -54,7 +55,7 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
         self._health_monitor = HealthMonitor()
         self._running = True
 
-    async def initialize(self, document_models: Optional[List[Type[Document]]] = None) -> None:
+    async def initialize(self, document_models: Optional[list[type[Document]]] = None) -> None:
         """Initialize collections for each document model."""
         self.document_models = document_models or []
         for model_class in self.document_models:
@@ -92,29 +93,40 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
                 doc_dict["_id"] = beanie_id
         return model_class(**doc_dict)
 
-    def _translate_query(self, query: dict[str, Any]) -> Query:
-        tinydb_query = Query()
+    def _translate_query(self, query: dict[str, Any]) -> Optional[Query]:
+        if not query:
+            return None
+
+        tinydb_query = None
+
+        def add_cond(new_cond):
+            nonlocal tinydb_query
+            if tinydb_query is None:
+                tinydb_query = new_cond
+            else:
+                tinydb_query &= new_cond
+
         for key, value in query.items():
             if isinstance(value, dict):
                 for op, op_value in value.items():
                     if op == "$eq":
-                        tinydb_query &= Query()[key] == op_value
+                        add_cond(Query()[key] == op_value)
                     elif op == "$gt":
-                        tinydb_query &= Query()[key] > op_value
+                        add_cond(Query()[key] > op_value)
                     elif op == "$lt":
-                        tinydb_query &= Query()[key] < op_value
+                        add_cond(Query()[key] < op_value)
                     elif op == "$gte":
-                        tinydb_query &= Query()[key] >= op_value
+                        add_cond(Query()[key] >= op_value)
                     elif op == "$lte":
-                        tinydb_query &= Query()[key] <= op_value
+                        add_cond(Query()[key] <= op_value)
                     elif op == "$ne":
-                        tinydb_query &= Query()[key] != op_value
+                        add_cond(Query()[key] != op_value)
                     elif op == "$in":
-                        tinydb_query &= Query()[key].one_of(op_value)
+                        add_cond(Query()[key].one_of(op_value))
                     else:
                         raise OperationNotSupported(f"TinyDB adapter does not support operator: {op}")
             else:
-                tinydb_query &= Query()[key] == value
+                add_cond(Query()[key] == value)
         return tinydb_query
 
     # --- IDocumentProvider Implementation ---
@@ -132,11 +144,15 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
             document.id = doc_id
         return document
 
-    async def insert_many(self, documents: List[T]) -> List[T]:
+    async def insert_many(self, documents: list[T]) -> list[T]:
         if not documents:
             return []
         collection_name = self._get_collection_name(type(documents[0]))
         collection = self._collections.get(collection_name)
+        if not collection:
+            collection = self.db.table(collection_name)
+            self._collections[collection_name] = collection
+
         prepared = [self._document_to_dict(d) for d in documents]
         await asyncio.to_thread(collection.insert_multiple, prepared)
         return documents
@@ -152,7 +168,7 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
 
     async def find_many(
         self, model_class: type[T], query: Any, limit: int = 0, skip: int = 0, sort: Optional[Any] = None
-    ) -> List[T]:
+    ) -> list[T]:
         collection = self._collections.get(self._get_collection_name(model_class))
         if not collection:
             return []
@@ -175,7 +191,7 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
         await asyncio.to_thread(collection.remove, doc_ids=[document.id])
         return True
 
-    async def delete_many(self, model_class: type[Document], query: Dict[str, Any]) -> int:
+    async def delete_many(self, model_class: type[Document], query: dict[str, Any]) -> int:
         collection = self._collections.get(self._get_collection_name(model_class))
         if not collection:
             return 0
@@ -183,7 +199,7 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
         removed = await asyncio.to_thread(collection.remove, q)
         return len(removed)
 
-    async def update_one(self, document: T, update_query: Dict[str, Any]) -> T:
+    async def update_one(self, document: T, update_query: dict[str, Any]) -> T:
         collection = self._collections.get(self._get_collection_name(type(document)))
         if not collection or not hasattr(document, "id"):
             raise StorageError("Missing collection or ID")
@@ -199,30 +215,60 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
     def _patch_model(self, model_class: type[Document]) -> None:
         adapter = self
 
-        async def find_one_patch(query=None, **kwargs):
+        async def find_one_patch(query: Optional[dict[str, Any]] = None, **kwargs: Any) -> Optional[Document]:
             return await adapter.find_one(model_class, query or kwargs)
 
-        async def find_many_patch(query=None, limit=0, skip=0, sort=None, **kwargs):
+        async def find_many_patch(
+            query: Optional[dict[str, Any]] = None,
+            limit: int = 0,
+            skip: int = 0,
+            sort: Optional[Any] = None,
+            **kwargs: Any,
+        ) -> list[Document]:
             return await adapter.find_many(model_class, query or kwargs, limit, skip, sort)
 
-        async def create_patch(*args, **kwargs):
+        async def create_patch(*args: Any, **kwargs: Any) -> Document:
             instance = args[0] if args and isinstance(args[0], model_class) else model_class(**kwargs)
             return await adapter.insert_one(instance)
 
         model_class.find_one = staticmethod(find_one_patch)
         model_class.find_many = staticmethod(find_many_patch)
-        model_class.create = create_patch
-        model_class.insert = lambda self_inst, **kwargs: adapter.insert_one(self_inst)
-        model_class.save = lambda self_inst, **kwargs: adapter.update_one(self_inst, {})
-        model_class.delete = lambda self_inst, **kwargs: adapter.delete_one(self_inst)
+        model_class.create = create_patch  # type: ignore
+        model_class.insert = lambda self_inst, **kwargs: adapter.insert_one(self_inst)  # type: ignore
+        model_class.save = lambda self_inst, **kwargs: adapter.update_one(self_inst, {})  # type: ignore
+        model_class.delete = lambda self_inst, **kwargs: adapter.delete_one(self_inst)  # type: ignore
 
         # Patch Settings
         class SettingsProxy:
-            name = adapter._get_collection_name(model_class)
-            indexes = []
+            name: str = ""
+            id_type: Any = PydanticObjectId
+            indexes: list[Any] = []
+            motor_collection: Any = None
+            pymongo_collection: Any = None
+            use_revision: bool = False
+            use_cache: bool = False
+            use_state_management: bool = False
+            is_root: bool = True
+            union_doc: Any = None
+            bson_encoders: dict[Any, Any] = {}
+            validation_schema: Any = None
+            projection: Any = None
 
-        model_class.Settings = SettingsProxy
-        model_class.get_settings = classmethod(lambda cls: SettingsProxy())
+            def __init__(self, m: type[Document]) -> None:
+                self.name = adapter._get_collection_name(m)
+                orig_settings = getattr(m, "Settings", None)
+                self.indexes = getattr(orig_settings, "indexes", []) if orig_settings else []
+
+            def get_collection(self) -> Any:
+                return None
+
+        proxy = SettingsProxy(model_class)
+        model_class.get_settings = classmethod(lambda cls: proxy)
+        model_class.Settings = proxy  # type: ignore
+        model_class._settings = proxy  # type: ignore
+
+        # Patch motor_collection getter
+        model_class.get_motor_collection = classmethod(lambda cls: None)
 
     # --- IStorageProvider (KV) Implementation ---
     async def get_async(self, key: str) -> Optional[Any]:
@@ -237,10 +283,10 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
     async def exists_async(self, key: str) -> bool:
         return False
 
-    async def list_keys_async(self, pattern: Optional[str] = None) -> List[str]:
+    async def list_keys_async(self, pattern: Optional[str] = None) -> list[str]:
         return []
 
-    async def find_async(self, query: Dict[str, Any]) -> List[Any]:
+    async def find_async(self, query: dict[str, Any]) -> list[Any]:
         return []
 
     async def clear_async(self) -> int:
@@ -285,7 +331,7 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
         result.success = True
         return result
 
-    def get_sync_metadata(self) -> Dict[str, Any]:
+    def get_sync_metadata(self) -> dict[str, Any]:
         return {"provider": "tinydb"}
 
     async def prepare_for_sync(self) -> bool:
@@ -294,14 +340,14 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
     async def cleanup_after_sync(self, sync_result: SyncResult) -> None:
         pass
 
-    async def get_data_for_sync(self, last_sync_timestamp: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    async def get_data_for_sync(self, last_sync_timestamp: Optional[datetime] = None) -> list[dict[str, Any]]:
         return []
 
     async def apply_sync_data(
         self,
-        sync_data: List[Dict[str, Any]],
+        sync_data: list[dict[str, Any]],
         conflict_resolution: SyncConflictResolution = SyncConflictResolution.NEWEST_WINS,
-    ) -> Tuple[int, List[Dict[str, Any]]]:
+    ) -> tuple[int, list[dict[str, Any]]]:
         return 0, []
 
     # --- IHealthCheck Implementation ---
@@ -311,8 +357,14 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
     async def perform_deep_health_check(self) -> bool:
         return self.is_healthy()
 
-    def get_health_status(self) -> Dict[str, Any]:
+    def get_health_status(self) -> dict[str, Any]:
         return self._health_monitor.get_health_status()
 
     def get_last_health_check(self) -> datetime:
         return self._health_monitor.get_last_health_check()
+
+    def close(self) -> None:
+        """Close database connection."""
+        if self.db:
+            self.db.close()
+        self._running = False
