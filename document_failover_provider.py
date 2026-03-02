@@ -13,6 +13,7 @@ from datetime import datetime, UTC
 from typing import Any, Dict, List, Optional, Type, TypeVar, Union
 
 from .interfaces.base_document_provider import IDocumentProvider
+from .interfaces.backup import IBackupProvider
 from .interfaces.sync import ISyncProvider, SyncResult, SyncDirection, SyncConflictResolution
 from .interfaces.health import IHealthCheck, HealthMonitor
 from .interfaces.storage import StorageError
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
-class DocumentFailoverProvider(IDocumentProvider, ISyncProvider, IHealthCheck):
+class DocumentFailoverProvider(IDocumentProvider, ISyncProvider, IHealthCheck, IBackupProvider):
     """
     Orchestrator for failover and data synchronization between two document providers.
 
@@ -48,12 +49,12 @@ class DocumentFailoverProvider(IDocumentProvider, ISyncProvider, IHealthCheck):
         self._active_provider = primary
         self._is_failing_over = False
         self._primary_failures = 0
-        self._last_primary_recovery = None
+        self._last_primary_recovery: Optional[datetime] = None
         self._health_monitor = HealthMonitor()
 
         # Sync state
         self._pending_sync = False
-        self._last_sync_timestamp = None
+        self._last_sync_timestamp: Optional[datetime] = None
 
     async def initialize(self, document_models: Optional[list[type[Any]]] = None) -> None:
         """Initialize both providers."""
@@ -339,21 +340,15 @@ class DocumentFailoverProvider(IDocumentProvider, ISyncProvider, IHealthCheck):
     async def perform_deep_health_check(self) -> bool:
         p_health = False
         try:
-            if isinstance(self.primary, IHealthCheck):
-                p_health = await self.primary.perform_deep_health_check()
-            else:
-                p_health = await self.primary.exists_async("__health_check__")
-        except Exception:
-            pass
+            p_health = await self.primary.perform_deep_health_check()
+        except Exception as exc:
+            logger.warning("Primary deep health check failed: %s", exc)
 
         s_health = False
         try:
-            if isinstance(self.secondary, IHealthCheck):
-                s_health = await self.secondary.perform_deep_health_check()
-            else:
-                s_health = await self.secondary.exists_async("__health_check__")
-        except Exception:
-            pass
+            s_health = await self.secondary.perform_deep_health_check()
+        except Exception as exc:
+            logger.warning("Secondary deep health check failed: %s", exc)
 
         healthy = p_health or s_health
         self._health_monitor.update_health(healthy)
@@ -372,3 +367,33 @@ class DocumentFailoverProvider(IDocumentProvider, ISyncProvider, IHealthCheck):
 
     def get_last_health_check(self) -> datetime:
         return self._health_monitor.get_last_health_check()
+
+    # --- IBackupProvider Implementation ---
+
+    async def create_backup(self, backup_path: str, metadata: Optional[dict[str, Any]] = None) -> bool:
+        """Delegate backup creation to the primary provider if it supports backups."""
+        if isinstance(self.primary, IBackupProvider):
+            return await self.primary.create_backup(backup_path, metadata)
+        logger.warning("Primary provider does not implement IBackupProvider; backup skipped.")
+        return False
+
+    async def restore_backup(self, backup_path: str, clear_existing: bool = False) -> bool:
+        """Delegate backup restoration to the primary provider if it supports backups."""
+        if isinstance(self.primary, IBackupProvider):
+            return await self.primary.restore_backup(backup_path, clear_existing)
+        logger.warning("Primary provider does not implement IBackupProvider; restore skipped.")
+        return False
+
+    async def list_backups(self, backup_dir: str) -> dict[str, dict[str, Any]]:
+        """Delegate backup listing to the primary provider if it supports backups."""
+        if isinstance(self.primary, IBackupProvider):
+            return await self.primary.list_backups(backup_dir)
+        logger.warning("Primary provider does not implement IBackupProvider; listing skipped.")
+        return {}
+
+    async def validate_backup(self, backup_path: str) -> dict[str, Any]:
+        """Delegate backup validation to the primary provider if it supports backups."""
+        if isinstance(self.primary, IBackupProvider):
+            return await self.primary.validate_backup(backup_path)
+        logger.warning("Primary provider does not implement IBackupProvider; validation skipped.")
+        return {"valid": False, "error": "Primary provider does not support backups"}

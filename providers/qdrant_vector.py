@@ -6,6 +6,7 @@ Qdrant Vector Provider - ENTERPRISE GRADE.
 Implements IVectorProvider using qdrant-client for native async support.
 """
 
+import json
 import uuid
 import logging
 from datetime import datetime, UTC
@@ -76,9 +77,9 @@ class QdrantVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck):
             self._health_monitor.update_health(False, {"error": str(e)})
             raise StorageError(f"Failed to connect to Qdrant: {e}")
 
-    async def create_collection(self, name: str, dimension: int, **kwargs: Any) -> bool:
+    async def create_index(self, name: str, dimension: int, distance_metric: str = "cosine", **kwargs: Any) -> bool:
         client = await self._get_client()
-        metric_str = kwargs.get("metric", "cosine").upper()
+        metric_str = distance_metric.upper()
 
         distance = Distance.COSINE
         if metric_str == "EUCLIDEAN":
@@ -95,47 +96,56 @@ class QdrantVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck):
             logger.error(f"Failed to create Qdrant collection {name}: {e}")
             return False
 
-    async def upsert_vectors(self, collection: str, vectors: list[dict[str, Any]]) -> bool:
+    async def upsert(
+        self,
+        index_name: str,
+        vectors: list[list[float]],
+        metadata: list[dict[str, Any]],
+        ids: Optional[list[str]] = None,
+    ) -> bool:
         client = await self._get_client()
         points = []
-        for vec_data in vectors:
-            doc_id = vec_data.get("id")
-            vector = vec_data.get("vector")
-            if not doc_id or not vector:
-                continue
-
+        for i, vector in enumerate(vectors):
+            doc_id = ids[i] if ids and i < len(ids) else str(uuid.uuid4())
+            meta = metadata[i] if i < len(metadata) else {}
             payload = {
                 "original_id": doc_id,
-                "content": vec_data.get("content", ""),
-                "metadata_json": json.dumps(vec_data.get("metadata", {})),
+                "content": meta.get("content", ""),
+                "metadata_json": json.dumps(meta),
             }
             points.append(PointStruct(id=self._to_uuid(doc_id), vector=vector, payload=payload))
 
         if not points:
             return True
         try:
-            await client.upsert(collection_name=collection, points=points)
+            await client.upsert(collection_name=index_name, points=points)
             return True
         except Exception as e:
             logger.error(f"Qdrant upsert failed: {e}")
             return False
 
-    async def search(self, collection: str, query_vector: list[float], limit: int = 10) -> list[dict[str, Any]]:
+    async def search(
+        self,
+        index_name: str,
+        query_vector: list[float],
+        limit: int = 10,
+        filters: Optional[dict[str, Any]] = None,
+    ) -> list[dict[str, Any]]:
         client = await self._get_client()
         try:
-            results = await client.search(
-                collection_name=collection, query_vector=query_vector, limit=limit, with_payload=True
+            response = await client.query_points(
+                collection_name=index_name, query=query_vector, limit=limit, with_payload=True
             )
             search_results = []
-            for res in results:
+            for res in response.points:
                 payload = res.payload or {}
-                metadata = json.loads(payload.get("metadata_json", "{}"))
+                meta = json.loads(payload.get("metadata_json", "{}"))
                 search_results.append(
                     {
                         "id": payload.get("original_id", str(res.id)),
                         "score": res.score,
                         "content": payload.get("content", ""),
-                        "metadata": metadata,
+                        "metadata": meta,
                     }
                 )
             return search_results
@@ -143,14 +153,39 @@ class QdrantVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck):
             logger.error(f"Qdrant search failed: {e}")
             return []
 
-    async def delete_vectors(self, collection: str, ids: list[str]) -> bool:
+    async def delete(self, index_name: str, ids: list[str]) -> bool:
         client = await self._get_client()
         uuids = [self._to_uuid(did) for did in ids]
         try:
-            await client.delete(collection_name=collection, points_selector=PointIdsList(points=uuids))
+            await client.delete(  # nosec B608
+                collection_name=index_name,
+                points_selector=PointIdsList(points=uuids),  # type: ignore[arg-type]
+            )
             return True
         except Exception as e:
             logger.error(f"Qdrant delete failed: {e}")
+            return False
+
+    async def get_index_stats(self, index_name: str) -> dict[str, Any]:
+        client = await self._get_client()
+        try:
+            info = await client.get_collection(collection_name=index_name)
+            return {
+                "name": index_name,
+                "vectors_count": info.indexed_vectors_count,
+                "status": str(info.status),
+            }
+        except Exception as e:
+            logger.error(f"Qdrant get_index_stats failed for {index_name}: {e}")
+            return {"name": index_name, "error": str(e)}
+
+    async def drop_index(self, index_name: str) -> bool:
+        client = await self._get_client()
+        try:
+            await client.delete_collection(collection_name=index_name)
+            return True
+        except Exception as e:
+            logger.error(f"Qdrant drop_index failed for {index_name}: {e}")
             return False
 
     # --- IStorageProvider Implementation ---
@@ -175,33 +210,23 @@ class QdrantVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck):
     async def clear_async(self) -> int:
         return 0
 
-    # Fallbacks
-    def get(self, key: str) -> Optional[Any]:
-        raise NotImplementedError()
-
-    def set(self, key: str, value: Any) -> bool:
-        raise NotImplementedError()
-
-    def delete(self, key: str) -> bool:
-        raise NotImplementedError()
-
-    def exists(self, key: str) -> bool:
-        raise NotImplementedError()
-
-    def list_keys(self, pattern: Optional[str] = None) -> list[str]:
-        raise NotImplementedError()
-
-    def find(self, query: dict[str, Any]) -> list[Any]:
-        raise NotImplementedError()
-
-    def clear(self) -> int:
-        raise NotImplementedError()
-
     def supports_ttl(self) -> bool:
         return False
 
-    def set_with_ttl(self, key: str, value: Any, ttl: int) -> bool:
-        raise NotImplementedError()
+    # --- IBackupProvider Implementation ---
+    async def create_backup(self, backup_path: str, metadata: Optional[dict[str, Any]] = None) -> bool:
+        logger.warning("QdrantVectorProvider.create_backup: Qdrant snapshots not yet implemented via this provider.")
+        return False
+
+    async def restore_backup(self, backup_path: str, clear_existing: bool = False) -> bool:
+        logger.warning("QdrantVectorProvider.restore_backup: Qdrant restore not yet implemented via this provider.")
+        return False
+
+    async def list_backups(self, backup_dir: str) -> dict[str, dict[str, Any]]:
+        return {}
+
+    async def validate_backup(self, backup_path: str) -> dict[str, Any]:
+        return {"valid": False, "error": "Backup validation not supported for Qdrant via this provider."}
 
     # --- ISyncProvider Implementation ---
     async def sync_to(

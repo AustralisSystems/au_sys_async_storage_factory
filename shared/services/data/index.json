@@ -1,0 +1,24 @@
+{
+  "files": [
+    {
+      "filename": "__init__.py",
+      "status": "ACTIVE",
+      "summary": "Thread-safe singleton accessor for DataManager.",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "data_manager.py",
+      "status": "ACTIVE",
+      "summary": "DataManager: async filesystem CRUD lifecycle operations.",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    }
+  ],
+  "generated_at": "2026-03-02T00:00:00Z",
+  "root": "storage/shared/services/data"
+}

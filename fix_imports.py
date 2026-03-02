@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-def fix_imports(directory):
+def fix_imports(directory: str) -> None:
     files = list(Path(directory).rglob("*.py"))
     print(f"Found {len(files)} files in {directory}")
     for path in files:

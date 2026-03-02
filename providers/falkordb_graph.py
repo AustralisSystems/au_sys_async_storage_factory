@@ -7,9 +7,18 @@ Implements IGraphProvider using falkordb-python for graph storage on top of Redi
 """
 
 import asyncio
+import json
 import logging
 from datetime import datetime, UTC
-from typing import Any, Optional, Dict, List, Tuple
+from pathlib import Path
+from typing import Any, Awaitable, Optional, Dict, List, Tuple, cast
+
+try:
+    import aiofiles  # type: ignore[import-untyped]
+
+    HAS_AIOFILES = True
+except ImportError:
+    HAS_AIOFILES = False
 
 try:
     from falkordb import FalkorDB
@@ -19,6 +28,7 @@ except ImportError:
     HAS_FALKORDB = False
 
 from ..interfaces.base_graph_provider import IGraphProvider
+from ..interfaces.backup import IBackupProvider
 from ..interfaces.sync import ISyncProvider, SyncResult, SyncDirection, SyncConflictResolution
 from ..interfaces.health import IHealthCheck, HealthMonitor
 from ..interfaces.storage import StorageError
@@ -26,7 +36,7 @@ from ..interfaces.storage import StorageError
 logger = logging.getLogger(__name__)
 
 
-class FalkorDBGraphProvider(IGraphProvider, ISyncProvider, IHealthCheck):
+class FalkorDBGraphProvider(IGraphProvider, ISyncProvider, IHealthCheck, IBackupProvider):
     """
     FalkorDB implementation of the IGraphProvider interface.
     """
@@ -56,12 +66,11 @@ class FalkorDBGraphProvider(IGraphProvider, ISyncProvider, IHealthCheck):
 
     async def initialize(self) -> None:
         try:
-            # Simple health check via ping
-            from redis import Redis
+            from redis.asyncio import Redis as AsyncRedis
 
-            r = Redis(host=self.host, port=self.port, password=self.password)
-            r.ping()
-            r.close()
+            r = AsyncRedis(host=self.host, port=self.port, password=self.password)
+            await cast(Awaitable[bool], r.ping())
+            await r.aclose()
             self._health_monitor.update_health(True)
             logger.info(f"FalkorDBGraphProvider initialized at {self.host}:{self.port}")
         except Exception as e:
@@ -69,7 +78,7 @@ class FalkorDBGraphProvider(IGraphProvider, ISyncProvider, IHealthCheck):
             raise StorageError(f"Failed to connect to Redis/FalkorDB: {e}")
 
     async def execute_query(
-        self, query: str, params: Optional[dict[str, Any]] = None, database: Optional[str] = None
+        self, cypher: str, params: Optional[dict[str, Any]] = None, database: Optional[str] = None
     ) -> list[dict[str, Any]]:
         target_db = database or self.database
         if target_db != self.database:
@@ -81,7 +90,7 @@ class FalkorDBGraphProvider(IGraphProvider, ISyncProvider, IHealthCheck):
             graph = self._get_graph()
 
         try:
-            result = await asyncio.to_thread(graph.query, query, params)
+            result = await asyncio.to_thread(graph.query, cypher, params)
             if not result or not hasattr(result, "header") or not hasattr(result, "result_set"):
                 return []
 
@@ -185,11 +194,11 @@ class FalkorDBGraphProvider(IGraphProvider, ISyncProvider, IHealthCheck):
 
     async def perform_deep_health_check(self) -> bool:
         try:
-            from redis import Redis
+            from redis.asyncio import Redis as AsyncRedis
 
-            r = Redis(host=self.host, port=self.port, password=self.password)
-            r.ping()
-            r.close()
+            r = AsyncRedis(host=self.host, port=self.port, password=self.password)
+            await cast(Awaitable[bool], r.ping())
+            await r.aclose()
             return True
         except Exception:
             return False
@@ -199,3 +208,104 @@ class FalkorDBGraphProvider(IGraphProvider, ISyncProvider, IHealthCheck):
 
     def get_last_health_check(self) -> datetime:
         return self._health_monitor.get_last_health_check()
+
+    # --- IBackupProvider Implementation ---
+    async def create_backup(self, backup_path: str, metadata: Optional[dict[str, Any]] = None) -> bool:
+        """Sovereign JSON backup: export all nodes and relationships via Cypher."""
+        if not HAS_AIOFILES:
+            logger.error("aiofiles is required for FalkorDBGraphProvider.create_backup")
+            return False
+        try:
+            nodes = await self.execute_query("MATCH (n) RETURN labels(n) AS labels, properties(n) AS props")
+            relationships = await self.execute_query(
+                "MATCH (a)-[r]->(b) RETURN "
+                "properties(a) AS from_props, type(r) AS rel_type, "
+                "properties(r) AS rel_props, properties(b) AS to_props"
+            )
+            backup_data = {
+                "provider": "falkordb",
+                "timestamp": datetime.now(UTC).isoformat(),
+                "metadata": metadata or {},
+                "nodes": nodes,
+                "relationships": relationships,
+            }
+            target = Path(backup_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            async with aiofiles.open(target, mode="w", encoding="utf-8") as f:
+                await f.write(json.dumps(backup_data, indent=2, default=str))
+            logger.info("FalkorDB backup created: %s", backup_path)
+            return True
+        except Exception as e:
+            logger.error("FalkorDB backup failed: %s", e)
+            return False
+
+    async def restore_backup(self, backup_path: str, clear_existing: bool = False) -> bool:
+        """Restore FalkorDB graph from sovereign JSON backup."""
+        if not HAS_AIOFILES:
+            logger.error("aiofiles is required for FalkorDBGraphProvider.restore_backup")
+            return False
+        try:
+            if not Path(backup_path).exists():
+                return False
+            async with aiofiles.open(backup_path, encoding="utf-8") as f:
+                content = await f.read()
+            backup_data = json.loads(content)
+
+            if clear_existing:
+                await self.execute_query("MATCH (n) DETACH DELETE n")
+
+            for node in backup_data.get("nodes", []):
+                props = node.get("props", {})
+                labels = node.get("labels", [])
+                label_str = "".join(f":{lbl}" for lbl in labels)
+                await self.execute_query(
+                    f"MERGE (n{label_str} {{id: $id}}) SET n += $props",
+                    {"id": props.get("id", ""), "props": props},
+                )
+
+            for rel in backup_data.get("relationships", []):
+                from_id = rel.get("from_props", {}).get("id", "")
+                to_id = rel.get("to_props", {}).get("id", "")
+                rel_type = rel.get("rel_type", "RELATED")
+                rel_props = rel.get("rel_props", {})
+                await self.execute_query(
+                    f"MATCH (a {{id: $from_id}}), (b {{id: $to_id}}) MERGE (a)-[r:{rel_type}]->(b) SET r += $props",
+                    {"from_id": from_id, "to_id": to_id, "props": rel_props},
+                )
+
+            logger.info("FalkorDB restored from %s", backup_path)
+            return True
+        except Exception as e:
+            logger.error("FalkorDB restore failed: %s", e)
+            return False
+
+    async def list_backups(self, backup_dir: str) -> dict[str, dict[str, Any]]:
+        """List available FalkorDB backup files in a directory."""
+        backups: dict[str, dict[str, Any]] = {}
+        path = Path(backup_dir)
+        if path.exists():
+            for item in path.glob("*.json"):
+                backups[item.name] = {
+                    "size": item.stat().st_size,
+                    "created": datetime.fromtimestamp(item.stat().st_ctime, UTC).isoformat(),
+                }
+        return backups
+
+    async def validate_backup(self, backup_path: str) -> dict[str, Any]:
+        """Validate a FalkorDB JSON backup file."""
+        path = Path(backup_path)
+        if not path.exists():
+            return {"valid": False, "error": "File not found"}
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            if data.get("provider") == "falkordb" and "nodes" in data and "relationships" in data:
+                return {
+                    "valid": True,
+                    "metadata": data.get("metadata"),
+                    "node_count": len(data.get("nodes", [])),
+                    "relationship_count": len(data.get("relationships", [])),
+                }
+            return {"valid": False, "error": "Invalid backup format"}
+        except Exception as e:
+            return {"valid": False, "error": str(e)}

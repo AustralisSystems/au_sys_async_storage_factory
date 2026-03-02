@@ -13,6 +13,7 @@ from datetime import datetime, UTC
 from typing import Any, Dict, List, Optional, Union, Tuple
 
 from ..interfaces.base_graph_provider import IGraphProvider
+from ..interfaces.backup import IBackupProvider
 from ..interfaces.sync import ISyncProvider, SyncResult, SyncDirection, SyncConflictResolution
 from ..interfaces.health import IHealthCheck, HealthMonitor
 from ..interfaces.storage import StorageError
@@ -20,7 +21,7 @@ from ..interfaces.storage import StorageError
 logger = logging.getLogger(__name__)
 
 
-class GraphFailoverProvider(IGraphProvider, ISyncProvider, IHealthCheck):
+class GraphFailoverProvider(IGraphProvider, ISyncProvider, IHealthCheck, IBackupProvider):
     """
     Orchestrator for failover and data synchronization between two graph providers.
     """
@@ -151,10 +152,51 @@ class GraphFailoverProvider(IGraphProvider, ISyncProvider, IHealthCheck):
         return self._health_monitor.is_healthy()
 
     async def perform_deep_health_check(self) -> bool:
-        return True
+        primary_ok = False
+        secondary_ok = False
+        try:
+            primary_ok = await self.primary.perform_deep_health_check()
+        except Exception as e:
+            logger.warning("Primary graph deep health check failed: %s", e)
+        try:
+            secondary_ok = await self.secondary.perform_deep_health_check()
+        except Exception as e:
+            logger.warning("Secondary graph deep health check failed: %s", e)
+        healthy = primary_ok or secondary_ok
+        self._health_monitor.update_health(healthy)
+        return healthy
 
     def get_health_status(self) -> dict[str, Any]:
         return self._health_monitor.get_health_status()
 
     def get_last_health_check(self) -> datetime:
         return self._health_monitor.get_last_health_check()
+
+    # --- IBackupProvider Implementation ---
+    async def create_backup(self, backup_path: str, metadata: Optional[dict[str, Any]] = None) -> bool:
+        """Delegate backup creation to the active provider."""
+        if isinstance(self._active_provider, IBackupProvider):
+            return await self._active_provider.create_backup(backup_path, metadata)
+        logger.error("Active graph provider does not support IBackupProvider.create_backup")
+        return False
+
+    async def restore_backup(self, backup_path: str, clear_existing: bool = False) -> bool:
+        """Delegate backup restore to the active provider."""
+        if isinstance(self._active_provider, IBackupProvider):
+            return await self._active_provider.restore_backup(backup_path, clear_existing)
+        logger.error("Active graph provider does not support IBackupProvider.restore_backup")
+        return False
+
+    async def list_backups(self, backup_dir: str) -> dict[str, dict[str, Any]]:
+        """Delegate backup listing to the active provider."""
+        if isinstance(self._active_provider, IBackupProvider):
+            return await self._active_provider.list_backups(backup_dir)
+        logger.error("Active graph provider does not support IBackupProvider.list_backups")
+        return {}
+
+    async def validate_backup(self, backup_path: str) -> dict[str, Any]:
+        """Delegate backup validation to the active provider."""
+        if isinstance(self._active_provider, IBackupProvider):
+            return await self._active_provider.validate_backup(backup_path)
+        logger.error("Active graph provider does not support IBackupProvider.validate_backup")
+        return {"valid": False, "error": "Active provider does not implement IBackupProvider"}

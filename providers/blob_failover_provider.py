@@ -10,7 +10,7 @@ Blob Storage Provider to ensure data availability and tier-syncing.
 import asyncio
 import logging
 from datetime import datetime, UTC
-from typing import Any, AsyncIterator, Optional, Union, Dict, List
+from typing import Any, AsyncIterator, Optional, Union
 
 from ..interfaces.base_blob_provider import BaseBlobProvider
 from ..interfaces.sync import ISyncProvider, SyncResult, SyncDirection, SyncConflictResolution
@@ -218,14 +218,14 @@ class BlobFailoverProvider(BaseBlobProvider, ISyncProvider, IHealthCheck):
         p_health = False
         try:
             p_health = await self.primary.exists("__health_check__")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Primary blob health check failed: %s", exc)
 
         s_health = False
         try:
             s_health = await self.secondary.exists("__health_check__")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Secondary blob health check failed: %s", exc)
 
         healthy = p_health or s_health
         self._health_monitor.update_health(healthy)

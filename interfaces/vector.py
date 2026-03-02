@@ -6,7 +6,7 @@ class IVectorProvider(ABC):
     """Unified interface for vector storage providers."""
 
     @abstractmethod
-    async def create_collection(self, name: str, dimension: int, **kwargs) -> None:
+    async def create_collection(self, name: str, dimension: int, **kwargs: Any) -> None:
         """Create vector collection/index."""
 
     @abstractmethod

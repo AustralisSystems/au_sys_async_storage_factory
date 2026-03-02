@@ -7,13 +7,12 @@ Implements IStorageProvider using an in-memory dictionary.
 Intended for transient data, caching, and testing.
 """
 
-import asyncio
 import re
 import time
 from datetime import datetime, UTC
-from typing import Any, Optional, Dict, List
+from typing import Any, Optional
 
-from .interfaces.storage import IStorageProvider, StorageError
+from .interfaces.storage import IStorageProvider
 from .interfaces.health import IHealthCheck, HealthMonitor
 
 
@@ -22,7 +21,7 @@ class AsyncMemoryProvider(IStorageProvider, IHealthCheck):
     Volatile in-memory storage provider.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._store: dict[str, Any] = {}
         self._expires: dict[str, float] = {}
         self._health_monitor = HealthMonitor()
@@ -48,8 +47,10 @@ class AsyncMemoryProvider(IStorageProvider, IHealthCheck):
         return False
 
     async def exists_async(self, key: str) -> bool:
-        val = await self.get_async(key)
-        return val is not None
+        if key in self._expires and time.time() > self._expires[key]:
+            await self.delete_async(key)
+            return False
+        return key in self._store
 
     async def list_keys_async(self, pattern: Optional[str] = None) -> list[str]:
         keys = list(self._store.keys())

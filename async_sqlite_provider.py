@@ -18,9 +18,10 @@ import time
 import logging
 from datetime import datetime, UTC
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import sqlalchemy as sa
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -189,7 +190,7 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
                 stmt = sa.delete(SQLiteKVModel).where(SQLiteKVModel.key == key)
                 result = await session.execute(stmt)
                 await session.commit()
-                deleted = result.rowcount > 0
+                deleted = cast("CursorResult[Any]", result).rowcount > 0
 
             self._health_monitor.update_health(True)
             return deleted
@@ -263,7 +264,7 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
             async with self._async_session() as session:
                 result = await session.execute(sa.delete(SQLiteKVModel))
                 await session.commit()
-                count = result.rowcount
+                count = cast("CursorResult[Any]", result).rowcount
 
             self._health_monitor.update_health(True)
             return count
@@ -446,7 +447,8 @@ class AsyncSQLiteProvider(IRelationalProvider, ISyncProvider):
                     "size_bytes": file_path.stat().st_size,
                     "created_at": datetime.fromtimestamp(file_path.stat().st_ctime, UTC).isoformat(),
                 }
-            except Exception:
+            except Exception as exc:
+                logger.warning("Failed to stat backup file '%s': %s", file_path, exc)
                 continue
 
         return backups

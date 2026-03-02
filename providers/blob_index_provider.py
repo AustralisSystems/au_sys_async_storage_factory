@@ -11,7 +11,7 @@ import asyncio
 import logging
 import json
 from datetime import datetime, UTC
-from typing import Any, AsyncIterator, Optional, Union, Dict
+from typing import Any, AsyncIterator, Optional, Union
 
 from ..interfaces.base_blob_provider import BaseBlobProvider
 from ..interfaces.sync import ISyncProvider
@@ -153,3 +153,21 @@ class BlobIndexMiddleware(BaseBlobProvider, IHealthCheck):
 
     def get_last_health_check(self) -> datetime:
         return self._health_monitor.get_last_health_check()
+
+    # --- IBackupProvider Implementation (delegates to primary) ---
+
+    async def create_backup(self, backup_path: str, metadata: Optional[dict[str, Any]] = None) -> bool:
+        """Delegate backup creation to the primary provider."""
+        return await self.primary.create_backup(backup_path, metadata)
+
+    async def restore_backup(self, backup_path: str, clear_existing: bool = False) -> bool:
+        """Delegate backup restoration to the primary provider."""
+        return await self.primary.restore_backup(backup_path, clear_existing)
+
+    async def validate_backup(self, backup_path: str) -> dict[str, Any]:
+        """Delegate backup validation to the primary provider."""
+        return await self.primary.validate_backup(backup_path)
+
+    async def list_backups(self, backup_dir: str) -> dict[str, dict[str, Any]]:
+        """Delegate backup listing to the primary provider."""
+        return await self.primary.list_backups(backup_dir)

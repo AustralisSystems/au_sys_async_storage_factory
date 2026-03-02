@@ -1,9 +1,7 @@
-import os
 import sys
 import json
-import logging
 import zipfile
-from typing import Optional, Union, AsyncIterator, Any, Dict
+from typing import Optional, Union, AsyncIterator, Any
 from datetime import datetime, timedelta, UTC
 
 from storage.shared.observability.logger_factory import get_component_logger
@@ -17,7 +15,7 @@ from storage.security.compliance import (
 
 # Force UTF-8 stdout encoding for Python CLIs
 if sys.stdout.encoding != "utf-8" and hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore
+    sys.stdout.reconfigure(encoding="utf-8")
 
 try:
     from azure.storage.blob.aio import BlobServiceClient

@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     app_version: str = Field("2.0.0", env="APP_VERSION")
     debug: bool = Field(False, env="DEBUG")
     environment: str = Field("production", env="ENVIRONMENT")
-    host: str = Field("0.0.0.0", env="HOST")
+    host: str = Field("0.0.0.0", env="HOST")  # nosec B104 — runtime-configurable via HOST env var
     port: int = Field(8867, env="PORT")
     log_level: str = Field("INFO", env="LOG_LEVEL")
 

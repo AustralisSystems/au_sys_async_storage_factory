@@ -248,8 +248,7 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
 
         try:
             async with aiosqlite.connect(str(self.db_path)) as db:
-                # nosec: table_name validated with isidentifier()
-                cursor = await db.execute(f'SELECT doc FROM "{table_name}" WHERE {where} LIMIT 1', params)
+                cursor = await db.execute(f'SELECT doc FROM "{table_name}" WHERE {where} LIMIT 1', params)  # nosec B608
                 row = await cursor.fetchone()
                 return self._dict_to_document(model_class, json.loads(row[0])) if row else None
         except Exception as e:
@@ -271,8 +270,7 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
 
         where, params = self._build_where_clause(query)
 
-        # nosec: table_name validated with isidentifier()
-        sql = f'SELECT doc FROM "{table_name}" WHERE {where}'
+        sql = f'SELECT doc FROM "{table_name}" WHERE {where}'  # nosec B608
 
         if sort:
             sql += " ORDER BY "
@@ -312,8 +310,7 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
             raise StorageError(f"Invalid collection name: {table_name}")
 
         async with aiosqlite.connect(str(self.db_path)) as db:
-            # nosec: table_name validated with isidentifier()
-            await db.execute(f'DELETE FROM "{table_name}" WHERE id = ?', (str(document.id),))
+            await db.execute(f'DELETE FROM "{table_name}" WHERE id = ?', (str(document.id),))  # nosec B608
             await db.commit()
         return True
 
@@ -325,15 +322,91 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
 
         where, params = self._build_where_clause(query)
         async with aiosqlite.connect(str(self.db_path)) as db:
-            # nosec: table_name validated with isidentifier()
-            cursor = await db.execute(f'DELETE FROM "{table_name}" WHERE {where}', params)
+            cursor = await db.execute(f'DELETE FROM "{table_name}" WHERE {where}', params)  # nosec B608
             await db.commit()
             return cursor.rowcount
 
     async def update_one(self, document: T, update_query: dict[str, Any]) -> T:
-        # For SQLite adapter, we simplify by re-inserting the modified document
-        # In a real ODM, this would handle $set, etc.
-        return await self.insert_one(document)
+        """
+        Apply a MongoDB-style update_query to the document and persist it.
+
+        Supported operators: $set, $unset, $inc, $push, $pull, $addToSet.
+        If no recognised operator keys are present, the document is upserted as-is.
+        """
+        if update_query:
+            doc_dict = self._document_to_dict(document)
+
+            for operator, fields in update_query.items():
+                if not isinstance(fields, dict):
+                    continue
+
+                if operator == "$set":
+                    for field, value in fields.items():
+                        doc_dict[field] = value
+
+                elif operator == "$unset":
+                    for field in fields:
+                        doc_dict.pop(field, None)
+
+                elif operator == "$inc":
+                    for field, increment in fields.items():
+                        current = doc_dict.get(field, 0)
+                        if not isinstance(current, (int, float)):
+                            raise StorageError(
+                                f"$inc operator requires a numeric field; field '{field}' is {type(current).__name__}."
+                            )
+                        doc_dict[field] = current + increment
+
+                elif operator == "$push":
+                    for field, value in fields.items():
+                        current = doc_dict.get(field, [])
+                        if not isinstance(current, list):
+                            raise StorageError(
+                                f"$push operator requires an array field; field '{field}' is {type(current).__name__}."
+                            )
+                        doc_dict[field] = current + [value]
+
+                elif operator == "$pull":
+                    for field, value in fields.items():
+                        current = doc_dict.get(field, [])
+                        if not isinstance(current, list):
+                            raise StorageError(
+                                f"$pull operator requires an array field; field '{field}' is {type(current).__name__}."
+                            )
+                        doc_dict[field] = [item for item in current if item != value]
+
+                elif operator == "$addToSet":
+                    for field, value in fields.items():
+                        current = doc_dict.get(field, [])
+                        if not isinstance(current, list):
+                            raise StorageError(
+                                f"$addToSet operator requires an array field; field '{field}' is {type(current).__name__}."
+                            )
+                        if value not in current:
+                            doc_dict[field] = current + [value]
+
+                else:
+                    raise OperationNotSupported(
+                        f"MongoDB update operator '{operator}' is not supported by BeanieSQLiteAdapter."
+                    )
+
+            # Reconstruct the document from the mutated dict so the returned instance is consistent
+            document = self._dict_to_document(type(document), doc_dict)
+
+        table_name = self._get_collection_name(type(document))
+        if not hasattr(document, "id") or not document.id:
+            document.id = PydanticObjectId()
+
+        doc_id = str(document.id)
+        data = self._document_to_dict(document)
+        data["id"] = doc_id
+
+        async with aiosqlite.connect(str(self.db_path)) as db:
+            await db.execute(
+                f'INSERT OR REPLACE INTO "{table_name}" (id, doc) VALUES (?, ?)', (doc_id, json.dumps(data))
+            )
+            await db.commit()
+        return document
 
     # --- Beanie Patching Logic ---
 
@@ -415,27 +488,29 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
         model_class.get_motor_collection = classmethod(lambda cls: None)
 
     # --- IStorageProvider (KV) Implementation ---
+    # BeanieSQLiteAdapter is a document-oriented provider; KV operations are not supported.
+    # Async variants raise OperationNotSupported consistently with their sync counterparts.
 
     async def get_async(self, key: str) -> Optional[Any]:
-        return None
+        raise OperationNotSupported("KV operations are not supported by BeanieSQLiteAdapter; use document methods.")
 
     async def set_async(self, key: str, value: Any) -> bool:
-        return False
+        raise OperationNotSupported("KV operations are not supported by BeanieSQLiteAdapter; use document methods.")
 
     async def delete_async(self, key: str) -> bool:
-        return False
+        raise OperationNotSupported("KV operations are not supported by BeanieSQLiteAdapter; use document methods.")
 
     async def exists_async(self, key: str) -> bool:
-        return False
+        raise OperationNotSupported("KV operations are not supported by BeanieSQLiteAdapter; use document methods.")
 
     async def list_keys_async(self, pattern: Optional[str] = None) -> list[str]:
-        return []
+        raise OperationNotSupported("KV operations are not supported by BeanieSQLiteAdapter; use document methods.")
 
     async def find_async(self, query: dict[str, Any]) -> list[Any]:
-        return []
+        raise OperationNotSupported("KV operations are not supported by BeanieSQLiteAdapter; use document methods.")
 
     async def clear_async(self) -> int:
-        return 0
+        raise OperationNotSupported("KV operations are not supported by BeanieSQLiteAdapter; use document methods.")
 
     def get(self, key: str) -> Optional[Any]:
         raise NotImplementedError("Use get_async")
@@ -477,15 +552,56 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
         result.sync_direction = direction
         start_time = datetime.datetime.now(datetime.UTC)
         try:
-            for model_class in self.document_models:
-                docs = await self.find_many(model_class, {})
-                for doc in docs:
+            if direction == SyncDirection.TO_TARGET:
+                # Push all local documents to the target provider
+                for model_class in self.document_models:
+                    docs = await self.find_many(model_class, {})
+                    for doc in docs:
+                        if not dry_run:
+                            await target_provider.insert_one(doc)
+                        result.items_synced += 1
+
+            elif direction == SyncDirection.FROM_TARGET:
+                # Pull all documents from target and apply locally
+                if isinstance(target_provider, ISyncProvider):
+                    sync_data = await target_provider.get_data_for_sync()
                     if not dry_run:
-                        await target_provider.insert_one(doc)
-                    result.items_synced += 1
+                        applied, conflict_items = await self.apply_sync_data(sync_data, conflict_resolution)
+                        result.items_synced = applied
+                        result.conflicts_found = len(conflict_items)
+                        result.conflicts_resolved = applied
+                        result.details["unresolved_conflicts"] = conflict_items
+                    else:
+                        result.items_synced = len(sync_data)
+                else:
+                    raise StorageError("FROM_TARGET sync requires target to implement ISyncProvider.")
+
+            elif direction == SyncDirection.BIDIRECTIONAL:
+                # Push local docs to target, then pull target docs locally
+                if not isinstance(target_provider, ISyncProvider):
+                    raise StorageError("BIDIRECTIONAL sync requires target to implement ISyncProvider.")
+
+                for model_class in self.document_models:
+                    docs = await self.find_many(model_class, {})
+                    for doc in docs:
+                        if not dry_run:
+                            await target_provider.insert_one(doc)
+                        result.items_synced += 1
+
+                sync_data = await target_provider.get_data_for_sync()
+                if not dry_run:
+                    applied, conflict_items = await self.apply_sync_data(sync_data, conflict_resolution)
+                    result.items_synced += applied
+                    result.conflicts_found = len(conflict_items)
+                    result.conflicts_resolved = applied
+                    result.details["unresolved_conflicts"] = conflict_items
+                else:
+                    result.items_synced += len(sync_data)
+
             result.success = True
         except Exception as e:
             result.errors.append(str(e))
+            result.success = False
         result.sync_duration_seconds = (datetime.datetime.now(datetime.UTC) - start_time).total_seconds()
         return result
 
@@ -499,14 +615,83 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
         pass
 
     async def get_data_for_sync(self, last_sync_timestamp: Optional[datetime.datetime] = None) -> list[dict[str, Any]]:
-        return []
+        """
+        Return all documents (or those updated after last_sync_timestamp) serialised for sync.
+
+        Each item includes a ``_model_class`` key so ``apply_sync_data`` can reconstruct
+        the correct type on the receiving end.
+        """
+        sync_data: list[dict[str, Any]] = []
+        for model_class in self.document_models:
+            query: dict[str, Any] = {}
+            if last_sync_timestamp:
+                query = {"updated_at": {"$gt": last_sync_timestamp.isoformat()}}
+
+            docs = await self.find_many(model_class, query)
+            for doc in docs:
+                data = self._document_to_dict(doc)
+                data["_model_class"] = model_class.__name__
+                sync_data.append(data)
+        return sync_data
 
     async def apply_sync_data(
         self,
         sync_data: list[dict[str, Any]],
         conflict_resolution: SyncConflictResolution = SyncConflictResolution.NEWEST_WINS,
     ) -> tuple[int, list[dict[str, Any]]]:
-        return 0, []
+        """
+        Apply incoming sync data to local SQLite storage.
+
+        Conflict resolution strategy NEWEST_WINS: if the local document has an
+        ``updated_at`` timestamp >= the incoming one, the incoming update is skipped.
+        Any item that cannot be applied is recorded in the returned conflicts list.
+        """
+        count = 0
+        conflicts: list[dict[str, Any]] = []
+
+        for item in sync_data:
+            item = dict(item)  # do not mutate the caller's data
+            model_name = item.pop("_model_class", None)
+            if not model_name:
+                continue
+
+            model_class = next((m for m in self.document_models if m.__name__ == model_name), None)
+            if not model_class:
+                continue
+
+            try:
+                doc_id = item.get("_id") or item.get("id")
+                existing = await self.find_one(model_class, {"id": str(doc_id)}) if doc_id else None
+
+                if existing:
+                    if conflict_resolution == SyncConflictResolution.NEWEST_WINS:
+                        existing_ts_raw = getattr(existing, "updated_at", None)
+                        incoming_ts_raw = item.get("updated_at")
+                        if existing_ts_raw is not None and incoming_ts_raw is not None:
+                            if isinstance(incoming_ts_raw, str):
+                                try:
+                                    incoming_ts_raw = datetime.datetime.fromisoformat(incoming_ts_raw)
+                                except ValueError:
+                                    incoming_ts_raw = None
+                            if incoming_ts_raw is not None:
+                                existing_ts = (
+                                    existing_ts_raw
+                                    if isinstance(existing_ts_raw, datetime.datetime)
+                                    else datetime.datetime.fromisoformat(str(existing_ts_raw))
+                                )
+                                if existing_ts >= incoming_ts_raw:
+                                    # Local is newer or equal — skip this item
+                                    continue
+                    await self.update_one(existing, {"$set": item})
+                else:
+                    new_doc = model_class(**item)
+                    await self.insert_one(new_doc)
+                count += 1
+            except Exception as e:
+                logger.error(f"SQLite apply_sync_data failed for {model_name}: {e}")
+                conflicts.append(item)
+
+        return count, conflicts
 
     # --- IHealthCheck Implementation ---
 

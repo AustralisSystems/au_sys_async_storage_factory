@@ -271,26 +271,29 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
         model_class.get_motor_collection = classmethod(lambda cls: None)
 
     # --- IStorageProvider (KV) Implementation ---
+    # BeanieTinyDBAdapter is a document-oriented provider; KV operations are not supported.
+    # Async variants raise OperationNotSupported consistently with their sync counterparts.
+
     async def get_async(self, key: str) -> Optional[Any]:
-        return None
+        raise OperationNotSupported("KV operations are not supported by BeanieTinyDBAdapter; use document methods.")
 
     async def set_async(self, key: str, value: Any) -> bool:
-        return False
+        raise OperationNotSupported("KV operations are not supported by BeanieTinyDBAdapter; use document methods.")
 
     async def delete_async(self, key: str) -> bool:
-        return False
+        raise OperationNotSupported("KV operations are not supported by BeanieTinyDBAdapter; use document methods.")
 
     async def exists_async(self, key: str) -> bool:
-        return False
+        raise OperationNotSupported("KV operations are not supported by BeanieTinyDBAdapter; use document methods.")
 
     async def list_keys_async(self, pattern: Optional[str] = None) -> list[str]:
-        return []
+        raise OperationNotSupported("KV operations are not supported by BeanieTinyDBAdapter; use document methods.")
 
     async def find_async(self, query: dict[str, Any]) -> list[Any]:
-        return []
+        raise OperationNotSupported("KV operations are not supported by BeanieTinyDBAdapter; use document methods.")
 
     async def clear_async(self) -> int:
-        return 0
+        raise OperationNotSupported("KV operations are not supported by BeanieTinyDBAdapter; use document methods.")
 
     def get(self, key: str) -> Optional[Any]:
         raise NotImplementedError("Use get_async")
@@ -328,11 +331,64 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
         dry_run: bool = False,
     ) -> SyncResult:
         result = SyncResult()
-        result.success = True
+        result.sync_direction = direction
+        start_time = datetime.now(UTC)
+        try:
+            if direction == SyncDirection.TO_TARGET:
+                # Push all local documents to the target provider
+                for model_class in self.document_models:
+                    docs = await self.find_many(model_class, {})
+                    for doc in docs:
+                        if not dry_run:
+                            await target_provider.insert_one(doc)
+                        result.items_synced += 1
+
+            elif direction == SyncDirection.FROM_TARGET:
+                # Pull all documents from target and apply locally
+                if isinstance(target_provider, ISyncProvider):
+                    sync_data = await target_provider.get_data_for_sync()
+                    if not dry_run:
+                        applied, conflict_items = await self.apply_sync_data(sync_data, conflict_resolution)
+                        result.items_synced = applied
+                        result.conflicts_found = len(conflict_items)
+                        result.conflicts_resolved = applied
+                        result.details["unresolved_conflicts"] = conflict_items
+                    else:
+                        result.items_synced = len(sync_data)
+                else:
+                    raise StorageError("FROM_TARGET sync requires target to implement ISyncProvider.")
+
+            elif direction == SyncDirection.BIDIRECTIONAL:
+                # Push local docs to target, then pull target docs locally
+                if not isinstance(target_provider, ISyncProvider):
+                    raise StorageError("BIDIRECTIONAL sync requires target to implement ISyncProvider.")
+
+                for model_class in self.document_models:
+                    docs = await self.find_many(model_class, {})
+                    for doc in docs:
+                        if not dry_run:
+                            await target_provider.insert_one(doc)
+                        result.items_synced += 1
+
+                sync_data = await target_provider.get_data_for_sync()
+                if not dry_run:
+                    applied, conflict_items = await self.apply_sync_data(sync_data, conflict_resolution)
+                    result.items_synced += applied
+                    result.conflicts_found = len(conflict_items)
+                    result.conflicts_resolved = applied
+                    result.details["unresolved_conflicts"] = conflict_items
+                else:
+                    result.items_synced += len(sync_data)
+
+            result.success = True
+        except Exception as e:
+            result.errors.append(str(e))
+            result.success = False
+        result.sync_duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
         return result
 
     def get_sync_metadata(self) -> dict[str, Any]:
-        return {"provider": "tinydb"}
+        return {"provider": "tinydb", "supports_incremental": False, "supports_bidirectional": True}
 
     async def prepare_for_sync(self) -> bool:
         return True
@@ -341,14 +397,83 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
         pass
 
     async def get_data_for_sync(self, last_sync_timestamp: Optional[datetime] = None) -> list[dict[str, Any]]:
-        return []
+        """
+        Return all documents (or those updated after last_sync_timestamp) serialised for sync.
+
+        Each item includes a ``_model_class`` key so ``apply_sync_data`` can reconstruct
+        the correct type on the receiving end.
+        """
+        sync_data: list[dict[str, Any]] = []
+        for model_class in self.document_models:
+            query: dict[str, Any] = {}
+            if last_sync_timestamp:
+                query = {"updated_at": {"$gt": last_sync_timestamp.isoformat()}}
+
+            docs = await self.find_many(model_class, query)
+            for doc in docs:
+                data = self._document_to_dict(doc)
+                data["_model_class"] = model_class.__name__
+                sync_data.append(data)
+        return sync_data
 
     async def apply_sync_data(
         self,
         sync_data: list[dict[str, Any]],
         conflict_resolution: SyncConflictResolution = SyncConflictResolution.NEWEST_WINS,
     ) -> tuple[int, list[dict[str, Any]]]:
-        return 0, []
+        """
+        Apply incoming sync data to local TinyDB storage.
+
+        Conflict resolution strategy NEWEST_WINS: if the local document has an
+        ``updated_at`` timestamp >= the incoming one, the incoming update is skipped.
+        Any item that cannot be applied is recorded in the returned conflicts list.
+        """
+        count = 0
+        conflicts: list[dict[str, Any]] = []
+
+        for item in sync_data:
+            item = dict(item)  # do not mutate the caller's data
+            model_name = item.pop("_model_class", None)
+            if not model_name:
+                continue
+
+            model_class = next((m for m in self.document_models if m.__name__ == model_name), None)
+            if not model_class:
+                continue
+
+            try:
+                doc_id = item.get("_id") or item.get("id")
+                existing = await self.find_one(model_class, {"id": str(doc_id)}) if doc_id else None
+
+                if existing:
+                    if conflict_resolution == SyncConflictResolution.NEWEST_WINS:
+                        existing_ts_raw = getattr(existing, "updated_at", None)
+                        incoming_ts_raw = item.get("updated_at")
+                        if existing_ts_raw is not None and incoming_ts_raw is not None:
+                            if isinstance(incoming_ts_raw, str):
+                                try:
+                                    incoming_ts_raw = datetime.fromisoformat(incoming_ts_raw)
+                                except ValueError:
+                                    incoming_ts_raw = None
+                            if incoming_ts_raw is not None:
+                                existing_ts = (
+                                    existing_ts_raw
+                                    if isinstance(existing_ts_raw, datetime)
+                                    else datetime.fromisoformat(str(existing_ts_raw))
+                                )
+                                if existing_ts >= incoming_ts_raw:
+                                    # Local is newer or equal — skip this item
+                                    continue
+                    await self.update_one(existing, item)
+                else:
+                    new_doc = model_class(**item)
+                    await self.insert_one(new_doc)
+                count += 1
+            except Exception as e:
+                logger.error(f"TinyDB apply_sync_data failed for {model_name}: {e}")
+                conflicts.append(item)
+
+        return count, conflicts
 
     # --- IHealthCheck Implementation ---
     def is_healthy(self) -> bool:

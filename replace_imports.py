@@ -1,7 +1,7 @@
 import os
 
 
-def replace_in_file(file_path):
+def replace_in_file(file_path: str) -> bool:
     try:
         with open(file_path, encoding="utf-8") as f:
             content = f.read()
@@ -17,7 +17,7 @@ def replace_in_file(file_path):
     return False
 
 
-def walk_and_replace(directory):
+def walk_and_replace(directory: str) -> None:
     for root, dirs, files in os.walk(directory):
         for file in files:
             if file.endswith(".py") or file.endswith(".md") or file.endswith(".json"):

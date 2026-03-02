@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Optional
 
 
 class IGraphProvider(ABC):
@@ -14,7 +14,7 @@ class IGraphProvider(ABC):
         """Create relationship between nodes."""
 
     @abstractmethod
-    async def query(self, cypher: str, params: dict[str, Any] = None) -> list[dict[str, Any]]:
+    async def query(self, cypher: str, params: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
         """Execute Cypher query."""
 
     @abstractmethod

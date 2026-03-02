@@ -7,10 +7,11 @@ This provider implements the IDocumentProvider interface using Motor and Beanie 
 providing a high-performance, async-native document storage solution.
 """
 
+import json
 import logging
 from datetime import datetime, UTC
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Type, TypeVar, Tuple
+from typing import Any, Dict, List, Optional, Type, TypeVar, Tuple, cast
 
 from motor.motor_asyncio import AsyncIOMotorClient
 from beanie import init_beanie, Document
@@ -53,7 +54,7 @@ class AsyncMongoDBProvider(IDocumentProvider, ISyncProvider, IHealthCheck, IBack
             self.document_models = document_models or []
 
             if self.document_models:
-                await init_beanie(database=self.db, document_models=self.document_models)
+                await init_beanie(database=self.db, document_models=self.document_models)  # type: ignore[arg-type]
 
             logger.info(
                 "AsyncMongoDBProvider initialized",
@@ -69,7 +70,7 @@ class AsyncMongoDBProvider(IDocumentProvider, ISyncProvider, IHealthCheck, IBack
 
     async def insert_one(self, document: T) -> T:
         try:
-            return await document.insert()
+            return cast(T, await document.insert())
         except Exception as e:
             logger.error(f"MongoDB InsertOne failed: {e}")
             raise StorageError(f"Insert failed: {e}")
@@ -85,14 +86,14 @@ class AsyncMongoDBProvider(IDocumentProvider, ISyncProvider, IHealthCheck, IBack
             logger.error(f"MongoDB InsertMany failed: {e}")
             raise StorageError(f"InsertMany failed: {e}")
 
-    async def find_one(self, model_class: type[T], query: dict[str, Any]) -> Optional[T]:
+    async def find_one(self, model_class: type[T], query: dict[str, Any]) -> Optional[T]:  # type: ignore[override]
         try:
             return await model_class.find_one(query)
         except Exception as e:
             logger.error(f"MongoDB FindOne failed: {e}")
             raise StorageError(f"FindOne failed: {e}")
 
-    async def find_many(
+    async def find_many(  # type: ignore[override]
         self,
         model_class: type[T],
         query: dict[str, Any],
@@ -190,7 +191,7 @@ class AsyncMongoDBProvider(IDocumentProvider, ISyncProvider, IHealthCheck, IBack
                 return False
             collection = self.db["key_value_store"]
             count = await collection.count_documents({"_id": key}, limit=1)
-            return count > 0
+            return bool(count > 0)
         except Exception as e:
             logger.error(f"MongoDB Exists KV failed: {e}")
             return False
@@ -283,18 +284,29 @@ class AsyncMongoDBProvider(IDocumentProvider, ISyncProvider, IHealthCheck, IBack
         start_time = datetime.now(UTC)
 
         try:
-            # Basic sync implementation: get all documents and push to target
-            # In a real implementation, we would use last_sync_timestamp and diffing
-            for model_class in self.document_models:
-                docs = await self.find_many(model_class, {})
-                for doc in docs:
-                    if not dry_run:
-                        if direction == SyncDirection.TO_TARGET:
+            if direction == SyncDirection.TO_TARGET:
+                # Push all local documents to the target provider
+                for model_class in self.document_models:
+                    docs = await self.find_many(model_class, {})
+                    for doc in docs:
+                        if not dry_run:
                             await target_provider.insert_one(doc)
-                        elif direction == SyncDirection.FROM_TARGET:
-                            # This direction would require getting from target
-                            pass
-                    result.items_synced += 1
+                        result.items_synced += 1
+
+            elif direction == SyncDirection.FROM_TARGET:
+                # Pull all documents from target and apply locally
+                if isinstance(target_provider, ISyncProvider):
+                    sync_data = await target_provider.get_data_for_sync()
+                    if not dry_run:
+                        applied, conflict_items = await self.apply_sync_data(sync_data, conflict_resolution)
+                        result.items_synced = applied
+                        result.conflicts_found = len(conflict_items)
+                        result.conflicts_resolved = applied
+                        result.details["unresolved_conflicts"] = conflict_items
+                    else:
+                        result.items_synced = len(sync_data)
+                else:
+                    raise StorageError("FROM_TARGET sync requires target to implement ISyncProvider.")
 
             result.success = True
         except Exception as e:
@@ -350,7 +362,18 @@ class AsyncMongoDBProvider(IDocumentProvider, ISyncProvider, IHealthCheck, IBack
                 existing = await model_class.get(doc_id)
 
                 if existing:
-                    # Basic conflict resolution (stub)
+                    if conflict_resolution == SyncConflictResolution.NEWEST_WINS:
+                        # Compare updated_at timestamps; skip if local version is newer or equal
+                        existing_ts = getattr(existing, "updated_at", None)
+                        incoming_ts = item.get("updated_at")
+                        if existing_ts and incoming_ts:
+                            if isinstance(incoming_ts, str):
+                                try:
+                                    incoming_ts = datetime.fromisoformat(incoming_ts)
+                                except ValueError:
+                                    incoming_ts = None
+                            if incoming_ts and existing_ts >= incoming_ts:
+                                continue
                     await existing.update({"$set": item})
                 else:
                     new_doc = model_class(**item)
@@ -388,9 +411,6 @@ class AsyncMongoDBProvider(IDocumentProvider, ISyncProvider, IHealthCheck, IBack
         """
         Create a backup by exporting collections to JSON.
         """
-        import json
-        from pathlib import Path
-
         try:
             backup_dir = Path(backup_path)
             backup_dir.mkdir(parents=True, exist_ok=True)
@@ -413,9 +433,6 @@ class AsyncMongoDBProvider(IDocumentProvider, ISyncProvider, IHealthCheck, IBack
         """
         Restore data from JSON backup files.
         """
-        import json
-        from pathlib import Path
-
         try:
             backup_dir = Path(backup_path)
             if not backup_dir.exists():

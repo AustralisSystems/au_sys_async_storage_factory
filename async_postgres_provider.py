@@ -16,9 +16,12 @@ import json
 import time
 import logging
 from datetime import datetime, UTC
-from typing import Any, Optional, Tuple, List, Dict
+from pathlib import Path
+from typing import Any, Optional, Tuple, List, Dict, cast
 
+import aiofiles  # type: ignore[import-untyped]
 import sqlalchemy as sa
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -193,7 +196,7 @@ class AsyncPostgresProvider(IRelationalProvider, ISyncProvider):
                 stmt = sa.delete(PostgresKVModel).where(PostgresKVModel.key == key)
                 result = await session.execute(stmt)
                 await session.commit()
-                deleted = result.rowcount > 0
+                deleted = cast("CursorResult[Any]", result).rowcount > 0
 
             self._health_monitor.update_health(True)
             return deleted
@@ -269,7 +272,7 @@ class AsyncPostgresProvider(IRelationalProvider, ISyncProvider):
             async with self._async_session() as session:
                 result = await session.execute(sa.delete(PostgresKVModel))
                 await session.commit()
-                count = result.rowcount
+                count = cast("CursorResult[Any]", result).rowcount
 
             self._health_monitor.update_health(True)
             return count
@@ -418,9 +421,6 @@ class AsyncPostgresProvider(IRelationalProvider, ISyncProvider):
                 },
                 "data": data,
             }
-            import aiofiles
-            from pathlib import Path
-
             target = Path(backup_path)
             target.parent.mkdir(parents=True, exist_ok=True)
             async with aiofiles.open(target, mode="w", encoding="utf-8") as f:
@@ -433,8 +433,6 @@ class AsyncPostgresProvider(IRelationalProvider, ISyncProvider):
     async def restore_backup(self, backup_path: str, clear_existing: bool = False) -> bool:
         await self.initialize()
         try:
-            import aiofiles
-
             async with aiofiles.open(backup_path, encoding="utf-8") as f:
                 content = await f.read()
                 backup_data = json.loads(content)
@@ -451,8 +449,6 @@ class AsyncPostgresProvider(IRelationalProvider, ISyncProvider):
 
     async def validate_backup(self, backup_path: str) -> dict[str, Any]:
         try:
-            from pathlib import Path
-
             if not Path(backup_path).exists():
                 return {"valid": False, "error": "File not found"}
             return {"valid": True}
@@ -460,7 +456,26 @@ class AsyncPostgresProvider(IRelationalProvider, ISyncProvider):
             return {"valid": False, "error": str(e)}
 
     async def list_backups(self, backup_dir: str) -> dict[str, dict[str, Any]]:
-        return {}
+        """List available JSON backups in a directory asynchronously."""
+        backup_path = Path(backup_dir)
+        if not backup_path.exists():
+            return {}
+
+        backups: dict[str, dict[str, Any]] = {}
+        pattern = f"{self.table_name}_*.json"
+
+        for file_path in backup_path.glob(pattern):
+            try:
+                backups[file_path.name] = {
+                    "path": str(file_path),
+                    "size_bytes": file_path.stat().st_size,
+                    "created_at": datetime.fromtimestamp(file_path.stat().st_ctime, UTC).isoformat(),
+                }
+            except Exception as exc:
+                logger.warning("Failed to stat backup file '%s': %s", file_path, exc)
+                continue
+
+        return backups
 
     def supports_ttl(self) -> bool:
         return True

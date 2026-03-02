@@ -1,3 +1,4 @@
+import asyncio
 import sys
 from typing import Optional, Union, AsyncIterator, Any
 
@@ -8,7 +9,7 @@ try:
     HAS_S3_LIBS = True
 except ImportError:
     HAS_S3_LIBS = False
-    ClientError = Exception  # type: ignore
+    ClientError = Exception
 
 from storage.shared.observability.logger_factory import get_component_logger
 from storage.interfaces.base_blob_provider import BaseBlobProvider
@@ -40,6 +41,9 @@ class S3BlobProvider(BaseBlobProvider):
         kms_key_id: Optional[str] = None,
         endpoint_url: Optional[str] = None,
     ):
+        if not HAS_S3_LIBS:
+            raise ImportError("aioboto3 and botocore are required for the S3 provider.")
+
         self.bucket = bucket_name
         self.region = region_name
         self.access_key = access_key
@@ -186,31 +190,36 @@ class S3BlobProvider(BaseBlobProvider):
         """
         Creates a 'Sovereign' backup of the S3 bucket by downloading all blobs
         and packaging them into a compressed archive.
+
+        All blobs are downloaded asynchronously first, then the ZIP is written
+        via asyncio.to_thread to avoid blocking sync I/O interleaved with async calls.
         """
         import zipfile
+        import json as _json
         from pathlib import Path
-        import io
 
         try:
-            target = Path(backup_path)
-            target.parent.mkdir(parents=True, exist_ok=True)
+            # Phase 1: collect all blob data asynchronously
+            blobs: list[tuple[str, bytes]] = []
+            async for blob in self.list_blobs():
+                key = blob["name"]
+                async with self._get_client() as client:
+                    response = await client.get_object(Bucket=self.bucket, Key=key)
+                    async with response["Body"] as stream:
+                        data = await stream.read()
+                blobs.append((key, data))
 
-            async with self._get_client() as client:
+            # Phase 2: write ZIP synchronously in a thread to avoid blocking the event loop
+            def _write_zip() -> None:
+                target = Path(backup_path)
+                target.parent.mkdir(parents=True, exist_ok=True)
                 with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
-                    # List and download all objects
-                    async for blob in self.list_blobs():
-                        key = blob["name"]
-                        response = await client.get_object(Bucket=self.bucket, Key=key)
-                        async with response["Body"] as stream:
-                            data = await stream.read()
-                            zf.writestr(key, data)
-
-                    # Add metadata
+                    for key, data in blobs:
+                        zf.writestr(key, data)
                     if metadata:
-                        import json
+                        zf.writestr("backup_metadata.json", _json.dumps(metadata))
 
-                        zf.writestr("backup_metadata.json", json.dumps(metadata))
-
+            await asyncio.to_thread(_write_zip)
             logger.info(f"S3 Backup created: {backup_path}")
             return True
         except Exception as e:

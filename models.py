@@ -8,8 +8,8 @@ Zero-Hardcode Mandate.
 """
 
 from enum import Enum
-from typing import Any, Dict, Optional, Union
-from pydantic import BaseModel, Field, SecretStr
+from typing import Any, Optional
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 
 class StorageBackendType(str, Enum):
@@ -39,8 +39,7 @@ class StorageBackendConfig(BaseModel):
     secondary_backend: Optional[str] = None
     failover_enabled: bool = False
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class StorageManifest(BaseModel):

@@ -8,10 +8,9 @@ Enforces the Zero-Hardcode Mandate by resolving all values from
 environment variables with appropriate defaults.
 """
 
-import os
-from typing import Optional, Dict, Any
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, SecretStr, PostgresDsn, RedisDsn, HttpUrl
+from pydantic import Field, SecretStr, PostgresDsn
 
 
 class StorageSettings(BaseSettings):
@@ -52,8 +51,17 @@ class StorageSettings(BaseSettings):
 
     # Admin
     admin_username: str = Field(default="admin")
-    admin_password: SecretStr = Field(default="admin123!")
+    admin_password: Optional[SecretStr] = Field(default=None)
     storage_backup_dir: str = Field(default="./data/backups")
+
+    # Azure Blob
+    azure_connection_string: Optional[str] = Field(default=None)
+    azure_container_name: str = Field(default="ace-blobs")
+
+    # GCP Storage
+    gcp_bucket_name: str = Field(default="ace-blobs")
+    gcp_project_id: Optional[str] = Field(default=None)
+    gcp_credentials_json: Optional[str] = Field(default=None)
 
 
 _settings: Optional[StorageSettings] = None

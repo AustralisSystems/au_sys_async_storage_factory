@@ -38,7 +38,7 @@ class StorageAdminPortal:
             if hasattr(provider, "initialize"):
                 logger.info(f"Initializing provider: {name}")
                 # Use type check to satisfy LSP if possible, or just ignore
-                tasks.append(provider.initialize())  # type: ignore
+                tasks.append(provider.initialize())
         if tasks:
             await asyncio.gather(*tasks)
 
@@ -56,7 +56,7 @@ class StorageAdminPortal:
                         "timestamp": datetime.now(UTC).isoformat(),
                     }
                 elif hasattr(provider, "is_healthy"):
-                    health_results[name] = {"healthy": provider.is_healthy()}  # type: ignore
+                    health_results[name] = {"healthy": provider.is_healthy()}
                 else:
                     health_results[name] = {"status": "missing_health_check_interface"}
             except Exception as e:

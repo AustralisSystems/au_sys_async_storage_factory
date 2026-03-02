@@ -2,9 +2,8 @@ import asyncio
 import functools
 import sys
 import json
-import logging
 import zipfile
-from typing import Optional, Union, AsyncIterator, Any, Dict
+from typing import Optional, Union, AsyncIterator, Any
 from datetime import timedelta, datetime, UTC
 
 from storage.shared.observability.logger_factory import get_component_logger
@@ -46,7 +45,7 @@ class GCPBlobProvider(BaseBlobProvider):
         if credentials_json:
             from google.oauth2 import service_account
 
-            creds = service_account.Credentials.from_service_account_file(credentials_json)
+            creds = service_account.Credentials.from_service_account_file(credentials_json)  # type: ignore[no-untyped-call]
             self.client = storage.Client(project=project_id, credentials=creds)
         else:
             self.client = storage.Client(project=project_id)

@@ -136,17 +136,41 @@ class HttpBlobProvider(BaseBlobProvider):
         self, prefix: Optional[str] = None, limit: Optional[int] = None
     ) -> AsyncIterator[dict[str, Any]]:
         """
-        Generic HTTP listing not standard. Yields nothing.
+        Attempts to list blobs via HTTP GET on the base URL.
+
+        If the endpoint returns a JSON array, each element is yielded as blob metadata.
+        Generic HTTP endpoints do not have a standardized listing protocol; if the
+        response is not a parseable JSON array, a warning is logged and no items are
+        yielded. Callers requiring listing MUST use a provider with native listing
+        support (S3, Azure, GCP, or the BlobIndexMiddleware).
         """
         try:
             headers = self.auth_header.copy() if self.auth_header else {}
-            response = await self.client.get(self.base_url, headers=headers)
+            list_url = f"{self.base_url}/" if prefix is None else f"{self.base_url}/{prefix}"
+            response = await self.client.get(list_url, headers=headers)
             response.raise_for_status()
-        except Exception as e:
-            logger.warning(f"HTTP Connectivity Check Failed: {e}")
 
-        if False:
-            yield {}
+            content_type = response.headers.get("content-type", "")
+            if "application/json" in content_type:
+                payload = response.json()
+                if isinstance(payload, list):
+                    for count, item in enumerate(payload, start=1):
+                        if isinstance(item, dict):
+                            yield item
+                        else:
+                            yield {"name": str(item)}
+                        if limit and count >= limit:
+                            return
+                    return
+
+            # Response was not a JSON array — listing is not supported by this endpoint.
+            logger.warning(
+                "HTTP list_blobs: endpoint did not return a JSON array; "
+                "listing is not supported for this generic HTTP provider. "
+                "Use BlobIndexMiddleware or a native cloud provider for listing."
+            )
+        except Exception as e:
+            logger.warning(f"HTTP list_blobs failed: {e}")
 
     def validate_compliance(self) -> ValidationResult:
         transport = TransportSecurity.TLS_1_2 if self.base_url.startswith("https") else TransportSecurity.PLAIN

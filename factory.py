@@ -9,22 +9,19 @@ cross-category failover/tiering.
 """
 
 import logging
-import os
 import json
 import asyncio
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Union, Type, TYPE_CHECKING
+from typing import Optional, Any, cast
 from datetime import datetime, UTC
 
 from .config import get_storage_settings
 from .models import StorageBackendConfig, StorageManifest, StorageBackendType
 from .interfaces.storage import IStorageProvider, StorageError
-
-if TYPE_CHECKING:
-    from .interfaces.base_document_provider import IDocumentProvider
-    from .interfaces.base_vector_provider import IVectorProvider
-    from .interfaces.base_graph_provider import IGraphProvider
-    from .interfaces.base_blob_provider import BaseBlobProvider
+from .interfaces.base_document_provider import IDocumentProvider
+from .interfaces.base_vector_provider import IVectorProvider
+from .interfaces.base_graph_provider import IGraphProvider
+from .interfaces.base_blob_provider import BaseBlobProvider
 
 logger = logging.getLogger(__name__)
 
@@ -115,26 +112,26 @@ class AsyncStorageFactory:
 
     async def get_relational(self, name: Optional[str] = None) -> IStorageProvider:
         name = name or self._manifest.default_relational
-        return await self._get_or_create_instance(name)
+        return cast(IStorageProvider, await self._get_or_create_instance(name))
 
     async def get_document(self, name: Optional[str] = None) -> IDocumentProvider:
         name = name or self._manifest.default_document
-        return await self._get_or_create_instance(name)
+        return cast(IDocumentProvider, await self._get_or_create_instance(name))
 
     async def get_blob(self, name: Optional[str] = None) -> BaseBlobProvider:
         name = name or self._manifest.default_blob
-        return await self._get_or_create_instance(name)
+        return cast(BaseBlobProvider, await self._get_or_create_instance(name))
 
     async def get_vector(self, name: Optional[str] = None) -> IVectorProvider:
         name = name or self._manifest.default_vector
-        return await self._get_or_create_instance(name)
+        return cast(IVectorProvider, await self._get_or_create_instance(name))
 
     async def get_graph(self, name: Optional[str] = None) -> IGraphProvider:
         name = name or self._manifest.default_graph
-        return await self._get_or_create_instance(name)
+        return cast(IGraphProvider, await self._get_or_create_instance(name))
 
     async def get_transient(self, name: str = "memory") -> IStorageProvider:
-        return await self._get_or_create_instance(name)
+        return cast(IStorageProvider, await self._get_or_create_instance(name))
 
     # --- Internal Orchestration ---
 
@@ -180,8 +177,10 @@ class AsyncStorageFactory:
         if provider == "sqlite":
             from .async_sqlite_provider import AsyncSQLiteProvider
 
-            conn_url = config.connection_url or self._settings.async_sqlite_path
-            db_path = str(conn_url).replace("sqlite+aiosqlite:///", "")
+            conn_url = str(config.connection_url or self._settings.async_sqlite_path)
+            # Strip the driver prefix to get the filesystem path
+            # Handles: sqlite+aiosqlite:///absolute  sqlite+aiosqlite://./relative
+            db_path = conn_url.split("///", 1)[-1] if "///" in conn_url else conn_url
             rel_instance = AsyncSQLiteProvider(db_path=db_path)
             await rel_instance.initialize()
             return rel_instance
@@ -215,6 +214,27 @@ class AsyncStorageFactory:
             region = str(config.options.get("region", self._settings.aws_region))
             return S3BlobProvider(bucket_name=bucket, region_name=region)
 
+        if provider == "azure":
+            from .providers.azure_blob import AzureBlobProvider
+
+            connection_string = str(
+                config.options.get("connection_string", self._settings.azure_connection_string or "")
+            )
+            container_name = str(config.options.get("container_name", self._settings.azure_container_name))
+            return AzureBlobProvider(connection_string=connection_string, container_name=container_name)
+
+        if provider == "gcp":
+            from .providers.gcp_storage import GCPBlobProvider
+
+            bucket_name = str(config.options.get("bucket_name", self._settings.gcp_bucket_name))
+            project_id = config.options.get("project_id", self._settings.gcp_project_id)
+            credentials_json = config.options.get("credentials_json", self._settings.gcp_credentials_json)
+            return GCPBlobProvider(
+                bucket_name=bucket_name,
+                project_id=project_id,
+                credentials_json=credentials_json,
+            )
+
         if provider == "redis":
             from .providers.redis_vector import RedisVectorProvider
 
@@ -228,26 +248,26 @@ class AsyncStorageFactory:
             from .providers.qdrant_vector import QdrantVectorProvider
 
             host = str(config.host or self._settings.qdrant_host)
-            instance = QdrantVectorProvider(host=host)
-            await instance.initialize()
-            return instance
+            qdrant_instance = QdrantVectorProvider(host=host)
+            await qdrant_instance.initialize()
+            return qdrant_instance
 
         if provider == "falkordb":
             from .providers.falkordb_graph import FalkorDBGraphProvider
 
             host = str(config.host or self._settings.falkordb_host)
             port = int(config.port or self._settings.falkordb_port)
-            instance = FalkorDBGraphProvider(host=host, port=port)
-            await instance.initialize()
-            return instance
+            falkordb_instance = FalkorDBGraphProvider(host=host, port=port)
+            await falkordb_instance.initialize()
+            return falkordb_instance
 
         if provider == "neo4j":
             from .providers.neo4j_graph import Neo4jGraphProvider
 
             uri = str(config.connection_url or self._settings.neo4j_uri)
-            instance = Neo4jGraphProvider(uri=uri)
-            await instance.initialize()
-            return instance
+            neo4j_instance = Neo4jGraphProvider(uri=uri)
+            await neo4j_instance.initialize()
+            return neo4j_instance
 
         if provider == "memory":
             from .async_memory_provider import AsyncMemoryProvider
@@ -271,7 +291,6 @@ class AsyncStorageFactory:
         if b_type == StorageBackendType.BLOB:
             from .providers.blob_failover_provider import BlobFailoverProvider
 
-            # Ensure BlobFailoverProvider is fully implemented or use a generic one
             return BlobFailoverProvider(primary=primary, secondary=secondary)
 
         if b_type == StorageBackendType.VECTOR:

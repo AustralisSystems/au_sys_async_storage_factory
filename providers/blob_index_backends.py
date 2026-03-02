@@ -13,7 +13,7 @@ import json
 import sqlite3
 from abc import ABC, abstractmethod
 from datetime import datetime, UTC
-from typing import Any, AsyncIterator, Optional, Dict
+from typing import Any, AsyncIterator, Optional
 
 from ..interfaces.storage import IStorageProvider, StorageError
 from ..interfaces.health import IHealthCheck, HealthMonitor
@@ -78,7 +78,8 @@ class RedisBlobIndex(IBlobIndex):
 
     async def delete_metadata(self, key: str) -> bool:
         try:
-            return await self.client.delete(self._full_key(key)) > 0
+            result: int = await self.client.delete(self._full_key(key))
+            return result > 0
         except Exception:
             return False
 
@@ -87,16 +88,14 @@ class RedisBlobIndex(IBlobIndex):
     ) -> AsyncIterator[dict[str, Any]]:
         search_pattern = f"{self.prefix}{prefix or ''}*"
         count = 0
-        # Simple implementation using keys() - in production use scan_iter
         try:
-            keys = await self.client.keys(search_pattern)
-            for k in keys:
+            async for k in self.client.scan_iter(search_pattern):
                 data = await self.client.get(k)
                 if data:
                     yield json.loads(data)
                     count += 1
                     if limit and count >= limit:
-                        break
+                        return
         except Exception as e:
             logger.error(f"Redis index list failed: {e}")
 
@@ -115,7 +114,7 @@ class SQLiteBlobIndex(IBlobIndex):
         self.db_path = db_path
         self._init_db()
 
-    def _init_db(self):
+    def _init_db(self) -> None:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS blob_metadata (
@@ -129,7 +128,7 @@ class SQLiteBlobIndex(IBlobIndex):
     async def set_metadata(self, key: str, metadata: dict[str, Any]) -> bool:
         loop = asyncio.get_running_loop()
 
-        def _set():
+        def _set() -> bool:
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute(
                     "INSERT OR REPLACE INTO blob_metadata (key, metadata, updated_at) VALUES (?, ?, ?)",
@@ -143,7 +142,7 @@ class SQLiteBlobIndex(IBlobIndex):
     async def get_metadata(self, key: str) -> Optional[dict[str, Any]]:
         loop = asyncio.get_running_loop()
 
-        def _get():
+        def _get() -> Optional[dict[str, Any]]:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.execute("SELECT metadata FROM blob_metadata WHERE key = ?", (key,))
                 row = cursor.fetchone()
@@ -154,7 +153,7 @@ class SQLiteBlobIndex(IBlobIndex):
     async def delete_metadata(self, key: str) -> bool:
         loop = asyncio.get_running_loop()
 
-        def _delete():
+        def _delete() -> bool:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.execute("DELETE FROM blob_metadata WHERE key = ?", (key,))
                 conn.commit()
@@ -166,10 +165,10 @@ class SQLiteBlobIndex(IBlobIndex):
         self, prefix: Optional[str] = None, limit: Optional[int] = None
     ) -> AsyncIterator[dict[str, Any]]:
         # This implementation is sync-wrapped in async generator
-        def _list():
+        def _list() -> list[dict[str, Any]]:
             with sqlite3.connect(self.db_path) as conn:
                 query = "SELECT metadata FROM blob_metadata"
-                params = []
+                params: list[Any] = []
                 if prefix:
                     query += " WHERE key LIKE ?"
                     params.append(f"{prefix}%")

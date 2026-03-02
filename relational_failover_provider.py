@@ -247,14 +247,14 @@ class RelationalFailoverProvider(IRelationalProvider, ISyncProvider):
         p_health = False
         try:
             p_health = await self.primary.perform_deep_health_check()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Primary deep health check failed: %s", exc)
 
         s_health = False
         try:
             s_health = await self.secondary.perform_deep_health_check()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Secondary deep health check failed: %s", exc)
 
         healthy = p_health or s_health
         self._health_monitor.update_health(healthy)

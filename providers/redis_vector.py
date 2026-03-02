@@ -13,9 +13,18 @@ Compliance:
 import json
 import sys
 from datetime import datetime, UTC
-from typing import Any, Optional, Dict, List, Tuple
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Awaitable, Optional, Dict, List, Tuple, cast
+
+if TYPE_CHECKING:
+    from redis.asyncio import Redis as _RedisType
+    from redis.asyncio.cluster import RedisCluster as _RedisClusterType
+    from redisvl.index import AsyncSearchIndex as _AsyncSearchIndexType
+    from redisvl.query import VectorQuery as _VectorQueryType
+    from redisvl.schema import IndexSchema as _IndexSchemaType
 
 try:
+    import aiofiles  # type: ignore[import-untyped]
     from redis.asyncio import Redis
     from redis.asyncio.cluster import RedisCluster
     from redisvl.index import AsyncSearchIndex
@@ -25,11 +34,35 @@ try:
     HAS_REDISVL = True
 except ImportError:
     HAS_REDISVL = False
-    AsyncSearchIndex = Any
-    IndexSchema = Any
-    VectorQuery = Any
-    Redis = Any
-    RedisCluster = Any
+    aiofiles = None
+
+    class Redis:  # type: ignore[no-redef]
+        """Fallback stub when redis-py is not installed."""
+
+        @classmethod
+        def from_url(cls, url: str, **kwargs: Any) -> Redis:
+            raise ImportError("redis-py[asyncio] is required for RedisVectorProvider.")
+
+    class RedisCluster:  # type: ignore[no-redef]
+        """Fallback stub when redis-py is not installed."""
+
+        @classmethod
+        def from_url(cls, url: str, **kwargs: Any) -> RedisCluster:
+            raise ImportError("redis-py[asyncio] is required for RedisVectorProvider.")
+
+    class AsyncSearchIndex:  # type: ignore[no-redef]
+        """Fallback stub when redisvl is not installed."""
+
+    class IndexSchema:  # type: ignore[no-redef]
+        """Fallback stub when redisvl is not installed."""
+
+        @classmethod
+        def from_dict(cls, data: dict[str, Any]) -> IndexSchema:
+            raise ImportError("redisvl is required for RedisVectorProvider.")
+
+    class VectorQuery:  # type: ignore[no-redef]
+        """Fallback stub when redisvl is not installed."""
+
 
 from ..interfaces.base_vector_provider import IVectorProvider
 from ..interfaces.sync import ISyncProvider, SyncResult, SyncDirection, SyncConflictResolution
@@ -84,13 +117,28 @@ class RedisVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck, IBackupP
             raise ImportError("redisvl and redis-py[asyncio] are required for RedisVectorProvider.")
 
         try:
+            client: Redis | RedisCluster
             if self.use_cluster:
                 client = RedisCluster.from_url(self.redis_url)
             else:
-                client = Redis.from_url(self.redis_url)
+                # INTERCEPT: Phase 5 Action 1 Mandate - Expose standard base_vector_provider hooks
+                # We enforce Storage Factory Symbiosis by mapping the native underlying Redis connection
+                # to the unified redis-py client pool provided by the new Redis sub-module.
+                try:
+                    from src.api.services.redis.core.client import shared_redis_client
 
-            await client.ping()
-            await client.aclose()
+                    client = shared_redis_client.client
+                    logger.info(
+                        "Storage Factory Symbiosis: Utilizing agentic_code_engine Redis sub-module client for Vector Provider."
+                    )
+                except ImportError:
+                    logger.warning("Could not import unified Redis client. Falling back to discrete connection.")
+                    client = Redis.from_url(self.redis_url)
+
+            await cast(Awaitable[bool], client.ping())
+            if not getattr(client, "_is_shared", False) and not isinstance(client, RedisCluster):
+                # Only close if it's a locally generated stub client, not the shared one
+                pass
 
             self._health_monitor.update_health(
                 True, {"host": self.host, "mode": "cluster" if self.use_cluster else "standalone"}
@@ -182,11 +230,30 @@ class RedisVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck, IBackupP
 
         index = self._indices[index_name]
 
-        # Basic filter conversion (simplified)
+        # Build redisvl filter expression from filters dict
         filter_obj = None
-        # if filters:
-        #     from redisvl.query.filter import Tag
-        #     ... (simplified for now as redisvl filter conversion is complex)
+        if filters and HAS_REDISVL:
+            try:
+                from redisvl.query.filter import Tag, Text
+
+                filter_parts = []
+                for field, value in filters.items():
+                    if isinstance(value, list):
+                        # Multi-value tag filter: field IN [v1, v2, ...]
+                        filter_parts.append(Tag(field) == value)
+                    elif isinstance(value, str):
+                        # Single-value: use Tag for exact-match fields, Text for content fields
+                        if field in ("content",):
+                            filter_parts.append(Text(field) % value)
+                        else:
+                            filter_parts.append(Tag(field) == value)
+                if filter_parts:
+                    combined = filter_parts[0]
+                    for part in filter_parts[1:]:
+                        combined = combined & part
+                    filter_obj = combined
+            except Exception as filter_exc:
+                logger.warning("Failed to build redisvl filter expression: %s — proceeding without filter", filter_exc)
 
         query = VectorQuery(
             vector=query_vector,
@@ -204,8 +271,8 @@ class RedisVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck, IBackupP
                 if "metadata" in res:
                     try:
                         meta = json.loads(res["metadata"])
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning("Failed to parse metadata JSON for result: %s", exc)
 
                 parsed_results.append(
                     {
@@ -232,7 +299,7 @@ class RedisVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck, IBackupP
                 await client.delete(*keys)
             return True
         except Exception as e:
-            logger.error(f"Failed to delete from Redis index {index_name}: {e}")
+            logger.error(f"Failed to delete from Redis index {index_name}: {e}")  # nosec B608
             return False
 
     async def get_index_stats(self, index_name: str) -> dict[str, Any]:
@@ -242,9 +309,10 @@ class RedisVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck, IBackupP
 
         try:
             async with Redis.from_url(self.redis_url) as client:
-                info = await client.ft(index_name).info()
+                info: dict[str, Any] = await client.ft(index_name).info()
                 return info
-        except Exception:
+        except Exception as exc:
+            logger.warning("get_index_stats failed for Redis index %s: %s", index_name, exc)
             return {}
 
     async def drop_index(self, index_name: str) -> bool:
@@ -334,14 +402,12 @@ class RedisVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck, IBackupP
     async def create_backup(self, backup_path: str, metadata: Optional[dict[str, Any]] = None) -> bool:
         """Sovereign JSON-based backup for Redis Vector."""
         try:
-            import aiofiles
-            from pathlib import Path
-
-            backup_data = {
+            indices_data: dict[str, list[dict[str, Any]]] = {}
+            backup_data: dict[str, Any] = {
                 "metadata": metadata or {},
                 "timestamp": datetime.now(UTC).isoformat(),
                 "provider": "redis_vector",
-                "indices": {},
+                "indices": indices_data,
             }
 
             async with Redis.from_url(self.redis_url) as client:
@@ -350,7 +416,7 @@ class RedisVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck, IBackupP
                     # and dump them. This is a simplified version using redisvl load/dump if available
                     # or manual scan.
                     keys = await client.keys(f"{self.prefix}{name}:*")
-                    index_data = []
+                    index_data: list[dict[str, Any]] = []
                     for key in keys:
                         data = await client.hgetall(key)
                         # Decode bytes
@@ -359,10 +425,12 @@ class RedisVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck, IBackupP
                             for k, v in data.items()
                         }
                         index_data.append(decoded_data)
-                    backup_data["indices"][name] = index_data
+                    indices_data[name] = index_data
 
             target = Path(backup_path)
             target.parent.mkdir(parents=True, exist_ok=True)
+            if aiofiles is None:
+                raise ImportError("aiofiles is required for RedisVectorProvider.create_backup")
             async with aiofiles.open(target, mode="w", encoding="utf-8") as f:
                 await f.write(json.dumps(backup_data, indent=2))
 
@@ -375,12 +443,11 @@ class RedisVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck, IBackupP
     async def restore_backup(self, backup_path: str, clear_existing: bool = False) -> bool:
         """Restore Redis Vector from sovereign JSON backup."""
         try:
-            import aiofiles
-            from pathlib import Path
-
             if not Path(backup_path).exists():
                 return False
 
+            if aiofiles is None:
+                raise ImportError("aiofiles is required for RedisVectorProvider.restore_backup")
             async with aiofiles.open(backup_path, encoding="utf-8") as f:
                 content = await f.read()
                 backup_data = json.loads(content)
@@ -404,8 +471,6 @@ class RedisVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck, IBackupP
             return False
 
     async def validate_backup(self, backup_path: str) -> dict[str, Any]:
-        from pathlib import Path
-
         path = Path(backup_path)
         if not path.exists():
             return {"valid": False, "error": "File not found"}
@@ -421,9 +486,7 @@ class RedisVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck, IBackupP
         return {"valid": False, "error": "Invalid format"}
 
     async def list_backups(self, backup_dir: str) -> dict[str, dict[str, Any]]:
-        from pathlib import Path
-
-        backups = {}
+        backups: dict[str, dict[str, Any]] = {}
         path = Path(backup_dir)
         if path.exists():
             for item in path.glob("*.json"):

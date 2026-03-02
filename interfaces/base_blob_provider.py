@@ -71,6 +71,10 @@ class BaseBlobProvider(IStorageProvider, IBackupProvider, ABC):
     async def list_backups(self, backup_dir: str) -> dict[str, dict[str, Any]]:
         """List available blob backups."""
 
+    @abstractmethod
+    def validate_compliance(self) -> Any:
+        """Validate compliance posture of the blob provider."""
+
     # --- IStorageProvider Implementation (KV-bridge) ---
 
     async def get_async(self, key: str) -> Optional[Any]:
