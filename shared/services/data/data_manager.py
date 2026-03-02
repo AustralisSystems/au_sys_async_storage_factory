@@ -22,11 +22,42 @@ import tempfile
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, AsyncIterator, Optional, TypeVar, Union
+from typing import Any, AsyncIterator, Optional, TypeVar, Union, cast
 
-import aiofiles
-import aiofiles.os
+import aiofiles  # type: ignore[import-untyped]
+import aiofiles.os  # type: ignore[import-untyped]
 from pydantic import BaseModel
+
+try:
+    from redis.asyncio import Redis
+
+    from src.api.services.redis.core.factory import AsyncRedisFactory
+
+    _HAS_REDIS = True
+except ImportError:
+    # Use Any for type hinting fallback to avoid LSP errors
+    # and provide a dummy Redis class if needed.
+    from typing import Generic, TypeVar
+
+    TR = TypeVar("TR")
+
+    class Redis(Generic[TR]):  # type: ignore[no-redef]
+        async def get(self, *args: Any, **kwargs: Any) -> Any: ...
+        async def setex(self, *args: Any, **kwargs: Any) -> Any: ...
+        async def delete(self, *args: Any, **kwargs: Any) -> Any: ...
+        async def keys(self, *args: Any, **kwargs: Any) -> Any: ...
+        async def publish(self, *args: Any, **kwargs: Any) -> Any: ...
+        async def sadd(self, *args: Any, **kwargs: Any) -> Any: ...
+        async def srem(self, *args: Any, **kwargs: Any) -> Any: ...
+        async def smembers(self, *args: Any, **kwargs: Any) -> Any: ...
+
+    class AsyncRedisFactory:  # type: ignore[no-redef]
+        @staticmethod
+        def get_client() -> Any:
+            return None
+
+    _HAS_REDIS = False
+
 
 from storage.factory import get_storage_factory
 from storage.interfaces.backup import IBackupProvider
@@ -61,6 +92,25 @@ class DataManager(IBackupProvider):
 
         self.base_data_dir = Path(base_data_dir).resolve()
         self.base_data_dir.mkdir(parents=True, exist_ok=True)
+
+        # Initialize Redis for caching (Action 9)
+        self.redis: Optional[Redis[Any]] = None  # type: ignore[type-arg]
+        if _HAS_REDIS:
+            try:
+                self.redis = AsyncRedisFactory.get_client()
+                logger.debug("Redis client resolved for DataManager")
+
+                # Check if we should warm the index on startup (Action 10)
+                # Note: We check a potentially new setting here.
+                settings = get_settings()
+                if getattr(settings, "data_index_warm_on_start", False):
+                    asyncio.create_task(self.warm_index())
+            except Exception as exc:
+                logger.warning(
+                    "Failed to resolve Redis client for DataManager",
+                    extra={"error": str(exc)},
+                )
+
         logger.debug(
             "DataManager initialised",
             extra={"base_data_dir": str(self.base_data_dir)},
@@ -105,7 +155,7 @@ class DataManager(IBackupProvider):
             True if the path exists, False otherwise.
         """
         target = self.get_path(relative_path)
-        return await aiofiles.os.path.exists(target)
+        return cast(bool, await aiofiles.os.path.exists(target))
 
     # ------------------------------------------------------------------
     # Read operations
@@ -126,9 +176,33 @@ class DataManager(IBackupProvider):
             FileNotFoundError: If the file does not exist.
         """
         target = self.get_path(relative_path)
+
+        # Check Redis cache (Action 9)
+        if self.redis:
+            try:
+                stat = target.stat()
+                cache_key = f"data:{relative_path}:{stat.st_mtime_ns}"
+                cached = await self.redis.get(cache_key)
+                if cached is not None:
+                    logger.debug("Cache hit", extra={"path": relative_path})
+                    return cached if isinstance(cached, str) else cached.decode(encoding)
+            except Exception as exc:
+                logger.debug("Cache read failed", extra={"error": str(exc)})
+
         logger.debug("Reading file", extra={"path": str(target)})
         async with aiofiles.open(target, encoding=encoding) as fh:
-            return await fh.read()
+            content: str = cast(str, await fh.read())
+
+        # Update cache (Action 9)
+        if self.redis:
+            try:
+                stat = target.stat()
+                cache_key = f"data:{relative_path}:{stat.st_mtime_ns}"
+                await self.redis.setex(cache_key, 3600, content)
+            except Exception as exc:
+                logger.debug("Cache write failed", extra={"error": str(exc)})
+
+        return content
 
     async def read_bytes(self, relative_path: str) -> bytes:
         """
@@ -144,9 +218,33 @@ class DataManager(IBackupProvider):
             FileNotFoundError: If the file does not exist.
         """
         target = self.get_path(relative_path)
+
+        # Check Redis cache (Action 9)
+        if self.redis:
+            try:
+                stat = target.stat()
+                cache_key = f"data:{relative_path}:{stat.st_mtime_ns}:raw"
+                cached = await self.redis.get(cache_key)
+                if cached is not None:
+                    logger.debug("Cache hit (bytes)", extra={"path": relative_path})
+                    return cached if isinstance(cached, bytes) else cached.encode("utf-8")
+            except Exception as exc:
+                logger.debug("Cache read failed", extra={"error": str(exc)})
+
         logger.debug("Reading bytes", extra={"path": str(target)})
         async with aiofiles.open(target, mode="rb") as fh:
-            return await fh.read()
+            content: bytes = cast(bytes, await fh.read())
+
+        # Update cache (Action 9)
+        if self.redis:
+            try:
+                stat = target.stat()
+                cache_key = f"data:{relative_path}:{stat.st_mtime_ns}:raw"
+                await self.redis.setex(cache_key, 3600, content)
+            except Exception as exc:
+                logger.debug("Cache write failed", extra={"error": str(exc)})
+
+        return content
 
     async def read_json(self, relative_path: str, encoding: str = "utf-8") -> Any:
         """
@@ -201,6 +299,31 @@ class DataManager(IBackupProvider):
             async with aiofiles.open(target, mode="w", encoding=encoding) as fh:
                 await fh.write(content)
 
+        # Invalidate cache (Action 9)
+        if self.redis:
+            try:
+                # We use keys matching data:path:* to invalidate all versions
+                # Note: This is an expensive operation if Redis has millions of keys.
+                # A better way would be using a dedicated set for each path's versions.
+                # For now, we follow the pattern strategy.
+                pattern = f"data:{relative_path}:*"
+                keys = await self.redis.keys(pattern)
+                if keys:
+                    await self.redis.delete(*keys)
+
+                # Update key index (Action 10)
+                await self.redis.sadd("data:index:files", relative_path)  # type: ignore[misc]
+
+                # Publish mutation event (Action 11)
+                event_payload = {
+                    "event": "write",
+                    "path": relative_path,
+                    "timestamp": datetime.now(tz=UTC).isoformat(),
+                }
+                await self.redis.publish("data.events", json.dumps(event_payload))
+            except Exception as exc:
+                logger.debug("Cache update or event publication failed", extra={"error": str(exc)})
+
         return target
 
     async def write_json(
@@ -251,6 +374,27 @@ class DataManager(IBackupProvider):
         logger.debug("Deleting file", extra={"path": str(target)})
         await aiofiles.os.remove(target)
 
+        # Invalidate cache (Action 9)
+        if self.redis:
+            try:
+                pattern = f"data:{relative_path}:*"
+                keys = await self.redis.keys(pattern)
+                if keys:
+                    await self.redis.delete(*keys)
+
+                # Update key index (Action 10)
+                await self.redis.srem("data:index:files", relative_path)  # type: ignore[misc]
+
+                # Publish mutation event (Action 11)
+                event_payload = {
+                    "event": "delete",
+                    "path": relative_path,
+                    "timestamp": datetime.now(tz=UTC).isoformat(),
+                }
+                await self.redis.publish("data.events", json.dumps(event_payload))
+            except Exception as exc:
+                logger.debug("Cache update or event publication failed", extra={"error": str(exc)})
+
     # ------------------------------------------------------------------
     # Archive operation
     # ------------------------------------------------------------------
@@ -292,6 +436,28 @@ class DataManager(IBackupProvider):
             extra={"source": str(source), "destination": str(destination)},
         )
         await aiofiles.os.rename(source, destination)
+
+        # Invalidate cache (Action 9)
+        if self.redis:
+            try:
+                pattern = f"data:{relative_path}:*"
+                keys = await self.redis.keys(pattern)
+                if keys:
+                    await self.redis.delete(*keys)
+
+                # Update key index (Action 10)
+                await self.redis.srem("data:index:files", relative_path)  # type: ignore[misc]
+
+                # Publish mutation event (Action 11)
+                event_payload = {
+                    "event": "archive",
+                    "path": relative_path,
+                    "timestamp": datetime.now(tz=UTC).isoformat(),
+                }
+                await self.redis.publish("data.events", json.dumps(event_payload))
+            except Exception as exc:
+                logger.debug("Cache update or event publication failed", extra={"error": str(exc)})
+
         return destination
 
     # ------------------------------------------------------------------
@@ -309,12 +475,56 @@ class DataManager(IBackupProvider):
         Returns:
             Sorted list of matching absolute Paths (files only, not directories).
         """
+        # Attempt to use Redis index (Action 10)
+        if self.redis:
+            try:
+                # SMEMBERS returns all files in the index
+                all_files = await self.redis.smembers("data:index:files")  # type: ignore[misc]
+                if all_files:
+                    # Filter matching files using pure path matching (simulating glob)
+                    import fnmatch
+
+                    matched = [self.base_data_dir / f for f in all_files if fnmatch.fnmatch(f, pattern)]
+                    # Verify they still exist on disk (optional but safer)
+                    results = sorted(p for p in matched if p.is_file())
+                    logger.debug(
+                        "Listed files (via Redis index)",
+                        extra={"pattern": pattern, "count": len(results)},
+                    )
+                    return results
+            except Exception as exc:
+                logger.debug("Redis index lookup failed, falling back to disk", extra={"error": str(exc)})
+
         results = sorted(p for p in self.base_data_dir.glob(pattern) if p.is_file())
         logger.debug(
             "Listed files",
             extra={"pattern": pattern, "count": len(results)},
         )
         return results
+
+    async def warm_index(self) -> int:
+        """
+        Scan base_data_dir and populate the Redis file index.
+
+        Returns:
+            Number of files indexed.
+        """
+        if not self.redis:
+            return 0
+
+        files = [str(p.relative_to(self.base_data_dir)) for p in self.base_data_dir.glob("**/*") if p.is_file()]
+
+        if files:
+            try:
+                # Clear existing index and rebuild
+                await self.redis.delete("data:index:files")
+                await self.redis.sadd("data:index:files", *files)  # type: ignore[misc]
+                logger.info("Redis file index warmed", extra={"count": len(files)})
+                return len(files)
+            except Exception as exc:
+                logger.error("Failed to warm Redis index", extra={"error": str(exc)})
+
+        return 0
 
     # ------------------------------------------------------------------
     # Health check
@@ -678,11 +888,11 @@ class DataManager(IBackupProvider):
         content = await self.read_file(relative_path, encoding=encoding)
         fh = io.StringIO(content)
         if has_header:
-            reader = csv.DictReader(fh)
-            return [dict(row) for row in reader]
+            dict_reader = csv.DictReader(fh)
+            return [dict(row) for row in dict_reader]
 
-        reader = csv.reader(fh)
-        return [row for row in reader]
+        list_reader = csv.reader(fh)
+        return [row for row in list_reader]
 
     async def write_csv(
         self,
@@ -709,10 +919,12 @@ class DataManager(IBackupProvider):
         if fieldnames:
             dict_writer = csv.DictWriter(fh, fieldnames=fieldnames)
             dict_writer.writeheader()
-            dict_writer.writerows(rows)  # type: ignore[arg-type]
+            # If fieldnames is provided, we expect rows to be list[dict[str, Any]]
+            dict_writer.writerows(cast(list[dict[str, Any]], rows))
         else:
             list_writer = csv.writer(fh)
-            list_writer.writerows(rows)  # type: ignore[arg-type]
+            # If no fieldnames, we expect rows to be list[list[Any]]
+            list_writer.writerows(cast(list[list[Any]], rows))
 
         return await self.write_file(
             relative_path,
@@ -804,7 +1016,7 @@ class DataManager(IBackupProvider):
 
             # Use aiofiles.os.wrap for blocking tarfile operations if needed,
             # but tarfile is standard lib. We run in a thread to keep it async-friendly.
-            def _create_tarball():
+            def _create_tarball() -> None:
                 with tarfile.open(target_path, "w:gz") as tar:
                     tar.add(self.base_data_dir, arcname=".")
 
@@ -860,7 +1072,7 @@ class DataManager(IBackupProvider):
                     elif item.is_dir():
                         shutil.rmtree(item)
 
-            def _extract_tarball():
+            def _extract_tarball() -> None:
                 with tarfile.open(source_path, "r:gz") as tar:
                     tar.extractall(self.base_data_dir, filter="data")  # nosec S202
 
@@ -911,7 +1123,7 @@ class DataManager(IBackupProvider):
             if not source_path.exists():
                 return {"valid": False, "error": "File not found"}
 
-            def _check_tarball():
+            def _check_tarball() -> list[str]:
                 with tarfile.open(source_path, "r:gz") as tar:
                     return tar.getnames()
 

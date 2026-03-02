@@ -12,7 +12,7 @@ import logging
 import json
 from datetime import datetime, UTC
 from pathlib import Path
-from typing import Any, Optional, TypeVar, Type, List, Dict, Tuple, Union
+from typing import Any, Optional, TypeVar, Type, List, Dict, Tuple, Union, cast
 
 from beanie import Document, PydanticObjectId
 from tinydb import Query, TinyDB
@@ -74,13 +74,13 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
 
     def _get_collection_name(self, model_class: type[Document]) -> str:
         if hasattr(model_class, "Settings") and hasattr(model_class.Settings, "name"):
-            return model_class.Settings.name
+            return cast(str, model_class.Settings.name)
         return model_class.__name__.lower()
 
     def _document_to_dict(self, document: Document) -> dict[str, Any]:
         if hasattr(document, "model_dump"):
-            return document.model_dump(mode="json")
-        return json.loads(document.json())
+            return cast(dict[str, Any], document.model_dump(mode="json"))
+        return cast(dict[str, Any], json.loads(document.json()))
 
     def _dict_to_document(self, model_class: type[T], data: Any) -> T:
         doc_dict = dict(data)
@@ -99,7 +99,7 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
 
         tinydb_query = None
 
-        def add_cond(new_cond):
+        def add_cond(new_cond: Any) -> None:
             nonlocal tinydb_query
             if tinydb_query is None:
                 tinydb_query = new_cond
@@ -157,7 +157,7 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
         await asyncio.to_thread(collection.insert_multiple, prepared)
         return documents
 
-    async def find_one(self, model_class: type[T], query: Any) -> Optional[T]:
+    async def find_one(self, model_class: type[T], query: dict[str, Any]) -> Optional[T]:  # type: ignore[override]
         collection = self._collections.get(self._get_collection_name(model_class))
         if not collection:
             return None
@@ -166,8 +166,8 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
         result = await asyncio.to_thread(collection.search, q) if q else await asyncio.to_thread(collection.all)
         return self._dict_to_document(model_class, result[0]) if result else None
 
-    async def find_many(
-        self, model_class: type[T], query: Any, limit: int = 0, skip: int = 0, sort: Optional[Any] = None
+    async def find_many(  # type: ignore[override]
+        self, model_class: type[T], query: dict[str, Any], limit: int = 0, skip: int = 0, sort: Optional[Any] = None
     ) -> list[T]:
         collection = self._collections.get(self._get_collection_name(model_class))
         if not collection:
@@ -231,8 +231,8 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
             instance = args[0] if args and isinstance(args[0], model_class) else model_class(**kwargs)
             return await adapter.insert_one(instance)
 
-        model_class.find_one = staticmethod(find_one_patch)
-        model_class.find_many = staticmethod(find_many_patch)
+        model_class.find_one = staticmethod(find_one_patch)  # type: ignore[method-assign, assignment]
+        model_class.find_many = staticmethod(find_many_patch)  # type: ignore[method-assign, assignment]
         model_class.create = create_patch  # type: ignore
         model_class.insert = lambda self_inst, **kwargs: adapter.insert_one(self_inst)  # type: ignore
         model_class.save = lambda self_inst, **kwargs: adapter.update_one(self_inst, {})  # type: ignore
@@ -263,9 +263,9 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
                 return None
 
         proxy = SettingsProxy(model_class)
-        model_class.get_settings = classmethod(lambda cls: proxy)
-        model_class.Settings = proxy  # type: ignore
-        model_class._settings = proxy  # type: ignore
+        model_class.get_settings = classmethod(lambda cls: proxy)  # type: ignore[method-assign, assignment]
+        model_class.Settings = proxy
+        model_class._settings = proxy
 
         # Patch motor_collection getter
         model_class.get_motor_collection = classmethod(lambda cls: None)
@@ -340,7 +340,7 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
                     docs = await self.find_many(model_class, {})
                     for doc in docs:
                         if not dry_run:
-                            await target_provider.insert_one(doc)
+                            await cast(Any, target_provider).insert_one(doc)
                         result.items_synced += 1
 
             elif direction == SyncDirection.FROM_TARGET:
@@ -367,7 +367,7 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
                     docs = await self.find_many(model_class, {})
                     for doc in docs:
                         if not dry_run:
-                            await target_provider.insert_one(doc)
+                            await cast(Any, target_provider).insert_one(doc)
                         result.items_synced += 1
 
                 sync_data = await target_provider.get_data_for_sync()

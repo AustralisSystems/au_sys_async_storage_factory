@@ -20,7 +20,7 @@ if sys.stdout.encoding != "utf-8" and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 try:
-    from google.cloud import storage
+    from google.cloud import storage  # type: ignore[attr-defined]
     from google.oauth2 import service_account
 
     GCP_AVAILABLE = True

@@ -8,7 +8,7 @@ Scaffolded from rest-api-orchestrator `src/services/storage/interfaces/collectio
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, cast
 
 from .storage import IStorageProvider
 
@@ -150,7 +150,7 @@ class CollectionManager:
         for i in range(0, len(objects), batch_size):
             batch = objects[i : i + batch_size]
             try:
-                if self.storage_provider.store_objects(batch, collection_name):
+                if cast(Any, self.storage_provider).store_objects(batch, collection_name):
                     successful_batches += 1
                 else:
                     failed_objects.extend(batch)
@@ -175,7 +175,7 @@ class CollectionManager:
         for obj in objects:
             try:
                 key = obj.get("id", f"object_{successful + failed}")
-                self.storage_provider.set(key, obj)
+                cast(Any, self.storage_provider).set(key, obj)
                 successful += 1
             except Exception:
                 failed += 1
@@ -198,10 +198,10 @@ class CollectionManager:
             Dictionary with collection statistics
         """
         if hasattr(self.storage_provider, "count_objects"):
-            count = self.storage_provider.count_objects(collection_name)
+            count = cast(Any, self.storage_provider).count_objects(collection_name)
         else:
             # Fallback counting
-            keys = self.storage_provider.list_keys()
+            keys = cast(Any, self.storage_provider).list_keys()
             count = len([k for k in keys if k.startswith(f"{collection_name}_")])
 
         return {

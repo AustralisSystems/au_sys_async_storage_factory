@@ -8,6 +8,7 @@ from datetime import datetime, UTC
 from typing import Any, Optional, Union, cast
 
 import sqlalchemy as sa
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -20,7 +21,6 @@ logger = logging.getLogger("storage.sqldb")
 
 class Base(DeclarativeBase):
     """Base class for SQLAlchemy models."""
-
 
 
 class KVStoreModel(Base):
@@ -189,7 +189,7 @@ class AsyncSQLDBProvider(IHealthCheck, IBackupProvider, IStorageProvider):
                 stmt = delete(KVStoreModel).where(KVStoreModel.key == key)
                 result = await session.execute(stmt)
                 await session.commit()
-                deleted = cast(int, result.rowcount) > 0
+                deleted = cast(CursorResult[Any], result).rowcount > 0
             self._health_monitor.update_health(True)
             return deleted
         except Exception as e:
@@ -274,7 +274,7 @@ class AsyncSQLDBProvider(IHealthCheck, IBackupProvider, IStorageProvider):
             async with self._async_session() as session:
                 result = await session.execute(delete(KVStoreModel))
                 await session.commit()
-                count = cast(int, result.rowcount)
+                count = cast(CursorResult[Any], result).rowcount
             self._health_monitor.update_health(True)
             return count
         except Exception as e:

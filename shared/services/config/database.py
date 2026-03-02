@@ -11,8 +11,9 @@ Author: Digital Angels Team
 Version: 1.0.0
 """
 
-from typing import Any, Optional
+from typing import Any, Optional, cast
 from uuid import uuid4
+import logging
 
 from sqlalchemy import (
     JSON,
@@ -35,10 +36,10 @@ from sqlalchemy.sql import func
 from storage.shared.services.config.settings import get_settings
 
 
-def get_logger():
-    from storage.shared.observability.logger_factory import create_debug_logger
+def get_logger() -> "logging.Logger":
+    from storage.shared.observability.logger_factory import get_component_logger
 
-    return create_debug_logger(__name__)
+    return get_component_logger(__name__)
 
 
 class _LazyLoggerProxy:
@@ -49,7 +50,7 @@ class _LazyLoggerProxy:
     so we can support typical logger methods accessed throughout this module.
     """
 
-    def __getattr__(self, item: str):
+    def __getattr__(self, item: str) -> Any:
         return getattr(get_logger(), item)
 
 
@@ -442,12 +443,12 @@ def get_database_url() -> Optional[str]:
     # 1. Try Legacy/Primary field
     url = getattr(settings, "app_database_url", None)
     if url:
-        return url
+        return cast(Optional[str], url)
 
     # 2. Try Standard field (often set by validators)
     url = getattr(settings, "database_url", None)
     if url:
-        return url
+        return cast(Optional[str], url)
 
     return None
 
@@ -510,7 +511,7 @@ async def init_database() -> None:
         if "sqlite" in async_url:
 
             @event.listens_for(_async_engine.sync_engine, "connect")
-            def set_sqlite_pragma(dbapi_connection, connection_record):
+            def set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:
                 cursor = dbapi_connection.cursor()
                 cursor.execute("PRAGMA journal_mode=WAL")
                 cursor.execute("PRAGMA synchronous=NORMAL")
@@ -559,7 +560,7 @@ def init_database_sync() -> None:
         if "sqlite" in sync_url:
 
             @event.listens_for(_sync_engine, "connect")
-            def set_sqlite_pragma_sync(dbapi_connection, connection_record):
+            def set_sqlite_pragma_sync(dbapi_connection: Any, connection_record: Any) -> None:
                 cursor = dbapi_connection.cursor()
                 cursor.execute("PRAGMA journal_mode=WAL")
                 cursor.execute("PRAGMA synchronous=NORMAL")

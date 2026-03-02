@@ -15,7 +15,7 @@ class TestDoc(Document):
 
 
 @pytest.mark.asyncio
-async def test_beanie_sqlite_adapter():
+async def test_beanie_sqlite_adapter() -> None:
     db_path = "test_beanie.db"
     if os.path.exists(db_path):
         os.remove(db_path)
@@ -42,6 +42,7 @@ async def test_beanie_sqlite_adapter():
     doc.value = 20
     await adapter.update_one(doc, {})
     found_updated = await adapter.find_one(TestDoc, {"name": "test1"})
+    assert found_updated is not None
     assert found_updated.value == 20
 
     # Test delete

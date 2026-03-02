@@ -23,7 +23,7 @@ class AdminPortalService:
     Integrates with FastAPI-Admin or custom Web UIs.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.factory = get_storage_factory()
 
     async def get_all_providers_health(self) -> list[dict[str, Any]]:
@@ -49,7 +49,7 @@ class AdminPortalService:
         # For now, it's a structural placeholder for the Admin UI.
         return ["default-container", "logs", "backups"]
 
-    async def trigger_tier_sync(self, source: str, target: str):
+    async def trigger_tier_sync(self, source: str, target: str) -> None:
         """
         Manually triggers a synchronization between storage tiers.
         Useful for maintenance or recovery scenarios.

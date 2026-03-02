@@ -13,7 +13,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from mcp.server.fastapi import Context, Resource
-from mcp.server.models import Tool
+from mcp.types import Tool
 
 from .factory import get_storage_factory
 from .admin_portal import get_admin_portal_service
@@ -27,7 +27,7 @@ class MCPStorageServer:
     Allows agents to browse and interact with storage tiers.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.factory = get_storage_factory()
         self.admin = get_admin_portal_service()
 
@@ -39,7 +39,7 @@ class MCPStorageServer:
             Tool(
                 name="list_blobs",
                 description="List files in the configured blob storage.",
-                parameters={
+                inputSchema={
                     "type": "object",
                     "properties": {
                         "prefix": {"type": "string", "description": "Filter by folder prefix"},
@@ -50,7 +50,7 @@ class MCPStorageServer:
             Tool(
                 name="upload_blob",
                 description="Upload a text or binary file to storage.",
-                parameters={
+                inputSchema={
                     "type": "object",
                     "properties": {
                         "key": {"type": "string", "description": "The destination path"},
@@ -62,7 +62,7 @@ class MCPStorageServer:
             Tool(
                 name="get_storage_health",
                 description="Check the status of all storage backends.",
-                parameters={"type": "object", "properties": {}},
+                inputSchema={"type": "object", "properties": {}},
             ),
         ]
 

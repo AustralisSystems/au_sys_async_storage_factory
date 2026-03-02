@@ -16,7 +16,7 @@ class FailoverDoc(Document):
 
 
 @pytest.mark.asyncio
-async def test_document_failover_provider():
+async def test_document_failover_provider() -> None:
     primary_db = "primary_test.db"
     secondary_db = "secondary_test.db"
 

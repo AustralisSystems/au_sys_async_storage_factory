@@ -103,14 +103,14 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
     def _get_collection_name(self, model_class: type[Document]) -> str:
         """Determines the SQLite table name for a given model."""
         if hasattr(model_class, "Settings") and hasattr(model_class.Settings, "name"):
-            return model_class.Settings.name
+            return cast(str, model_class.Settings.name)
         return model_class.__name__.lower()
 
     def _document_to_dict(self, document: Document) -> dict[str, Any]:
         """Converts a Beanie document to a JSON-serializable dictionary."""
         if hasattr(document, "model_dump"):
-            return document.model_dump(mode="json")
-        return json.loads(document.json())
+            return cast(dict[str, Any], document.model_dump(mode="json"))
+        return cast(dict[str, Any], json.loads(document.json()))
 
     def _dict_to_document(self, model_class: type[T], data: dict[str, Any]) -> T:
         """Converts a dictionary back into a Beanie document instance."""
@@ -155,12 +155,12 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
                     params.extend(p[1])
             elif key.startswith("$"):
                 # Operator at this level
-                sql, p = self._translate_operator(parent_key or "", key, value)
+                sql, p = self._translate_operator(parent_key or "", key, value)  # type: ignore[assignment]
                 conditions.append(sql)
                 params.extend(p)
             else:
                 # Nested field or field with operators
-                sql, p = self._parse_expression(value, key)
+                sql, p = self._parse_expression(value, key)  # type: ignore[assignment]
                 conditions.append(sql)
                 params.extend(p)
 
@@ -238,7 +238,7 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
             await db.commit()
         return documents
 
-    async def find_one(self, model_class: type[T], query: dict[str, Any]) -> Optional[T]:
+    async def find_one(self, model_class: type[T], query: dict[str, Any]) -> Optional[T]:  # type: ignore[override]
         """Locates a single document matching the query."""
         table_name = self._get_collection_name(model_class)
         if not table_name.isidentifier():
@@ -255,7 +255,7 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
             logger.error(f"SQLite find_one error: {e}")
             return None
 
-    async def find_many(
+    async def find_many(  # type: ignore[override]
         self,
         model_class: type[T],
         query: dict[str, Any],
@@ -441,10 +441,10 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
             return await adapter.insert_many(documents)
 
         # Patching methods onto the model class
-        model_class.find_one = staticmethod(find_one_patch)
-        model_class.find_many = staticmethod(find_many_patch)
-        model_class.find_all = staticmethod(find_many_patch)
-        model_class.get = staticmethod(get_patch)
+        model_class.find_one = staticmethod(find_one_patch)  # type: ignore[method-assign, assignment]
+        model_class.find_many = staticmethod(find_many_patch)  # type: ignore[method-assign, assignment]
+        model_class.find_all = staticmethod(find_many_patch)  # type: ignore[method-assign, assignment]
+        model_class.get = staticmethod(get_patch)  # type: ignore[method-assign, assignment]
         model_class.create = create_patch  # type: ignore
         model_class.insert = lambda self_inst, **kwargs: adapter.insert_one(self_inst)  # type: ignore
         model_class.save = lambda self_inst, **kwargs: adapter.insert_one(self_inst)  # type: ignore
@@ -452,7 +452,7 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
         model_class.update = lambda self_inst, **kwargs: adapter.insert_one(self_inst)  # type: ignore
 
         # Patching static methods for bulk ops
-        model_class.insert_many = staticmethod(insert_many_patch)
+        model_class.insert_many = staticmethod(insert_many_patch)  # type: ignore[method-assign, assignment]
         model_class.delete_many = staticmethod(lambda q=None, **kwargs: adapter.delete_many(model_class, q or kwargs))
 
         # Settings Proxy
@@ -480,9 +480,9 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
                 return None
 
         proxy = SettingsProxy(model_class)
-        model_class.get_settings = classmethod(lambda cls: proxy)
-        model_class.Settings = proxy  # type: ignore
-        model_class._settings = proxy  # type: ignore
+        model_class.get_settings = classmethod(lambda cls: proxy)  # type: ignore[method-assign, assignment]
+        model_class.Settings = proxy
+        model_class._settings = proxy
 
         # Patch motor_collection getter
         model_class.get_motor_collection = classmethod(lambda cls: None)
@@ -558,7 +558,7 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
                     docs = await self.find_many(model_class, {})
                     for doc in docs:
                         if not dry_run:
-                            await target_provider.insert_one(doc)
+                            await cast(Any, target_provider).insert_one(doc)
                         result.items_synced += 1
 
             elif direction == SyncDirection.FROM_TARGET:
@@ -585,7 +585,7 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
                     docs = await self.find_many(model_class, {})
                     for doc in docs:
                         if not dry_run:
-                            await target_provider.insert_one(doc)
+                            await cast(Any, target_provider).insert_one(doc)
                         result.items_synced += 1
 
                 sync_data = await target_provider.get_data_for_sync()

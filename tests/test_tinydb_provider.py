@@ -15,12 +15,12 @@ class TinyTestDoc(Document):
 
 
 @pytest.mark.asyncio
-async def test_beanie_tinydb_adapter():
+async def test_beanie_tinydb_adapter() -> None:
     db_path = "test_tiny.json"
     if os.path.exists(db_path):
         os.remove(db_path)
 
-    adapter = BeanieTinyDBAdapter(db_path=db_path)
+    adapter = BeanieTinyDBAdapter(db_path=db_path)  # type: ignore[abstract]
     await adapter.initialize(document_models=[TinyTestDoc])
 
     # Test insert
