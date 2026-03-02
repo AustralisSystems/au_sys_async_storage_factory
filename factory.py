@@ -7,9 +7,9 @@ import logging
 import os
 from typing import Optional
 
-from core.storage.interfaces.storage import IStorageProvider
-from core.storage.async_sqlite_provider import AsyncSQLiteProvider
-from core.storage.async_sqldb_provider import AsyncSQLDBProvider
+from storage.interfaces.storage import IStorageProvider
+from storage.async_sqlite_provider import AsyncSQLiteProvider
+from storage.async_sqldb_provider import AsyncSQLDBProvider
 
 logger = logging.getLogger(__name__)
 

@@ -8,9 +8,9 @@ from sqlalchemy import Column, Float, String, Text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 
-from core.storage.interfaces.backup import IBackupProvider
-from core.storage.interfaces.health import HealthMonitor, IHealthCheck
-from core.storage.interfaces.storage import IStorageProvider, StorageError
+from storage.interfaces.backup import IBackupProvider
+from storage.interfaces.health import HealthMonitor, IHealthCheck
+from storage.interfaces.storage import IStorageProvider, StorageError
 
 def get_logger():
     from src.shared.observability.logger_factory import create_debug_logger

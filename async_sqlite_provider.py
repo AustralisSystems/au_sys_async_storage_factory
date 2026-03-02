@@ -8,9 +8,9 @@ from typing import Any, Optional, Union
 
 import aiosqlite
 
-from core.storage.interfaces.backup import IBackupProvider
-from core.storage.interfaces.health import HealthMonitor, IHealthCheck
-from core.storage.interfaces.storage import IStorageProvider, StorageError
+from storage.interfaces.backup import IBackupProvider
+from storage.interfaces.health import HealthMonitor, IHealthCheck
+from storage.interfaces.storage import IStorageProvider, StorageError
 
 
 def get_logger():
