@@ -31,8 +31,6 @@ from pydantic import BaseModel
 try:
     from redis.asyncio import Redis
 
-    from redis.factory import AsyncRedisFactory
-
     _HAS_REDIS = True
 except ImportError:
     # Use Any for type hinting fallback to avoid LSP errors
@@ -51,14 +49,9 @@ except ImportError:
         async def srem(self, *args: Any, **kwargs: Any) -> Any: ...
         async def smembers(self, *args: Any, **kwargs: Any) -> Any: ...
 
-    class AsyncRedisFactory:  # type: ignore[no-redef]
-        @staticmethod
-        def get_client() -> Any:
-            return None
-
     _HAS_REDIS = False
 
-
+from storage.redis_client import StorageRedisFactory
 from storage.interfaces.backup import IBackupProvider
 from storage.shared.observability.logger_factory import get_component_logger
 from storage.shared.services.config.settings import get_settings
@@ -96,12 +89,12 @@ class DataManager(IBackupProvider):
         self.redis: Optional[Redis[Any]] = None  # type: ignore[type-arg]
         if _HAS_REDIS:
             try:
-                self.redis = AsyncRedisFactory.get_client()
+                settings = get_settings()
+                self.redis = StorageRedisFactory.get_client(host=settings.redis_host, port=settings.redis_port)
                 logger.debug("Redis client resolved for DataManager")
 
                 # Check if we should warm the index on startup (Action 10)
                 # Note: We check a potentially new setting here.
-                settings = get_settings()
                 if getattr(settings, "data_index_warm_on_start", False):
                     asyncio.create_task(self.warm_index())
             except Exception as exc:

@@ -114,21 +114,17 @@ class RedisVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck, IBackupP
         try:
             client: Redis | RedisCluster
             if self.use_cluster:
-                client = RedisCluster.from_url(self.redis_url)
-            else:
-                # INTERCEPT: Phase 5 Action 1 Mandate - Expose standard base_vector_provider hooks
-                # We enforce Storage Factory Symbiosis by mapping the native underlying Redis connection
-                # to the unified redis-py client pool provided by the new Redis sub-module.
-                try:
-                    from redis.client import shared_redis_client
+                from ..redis_client import StorageRedisFactory
 
-                    client = shared_redis_client.client
-                    logger.info(
-                        "Storage Factory Symbiosis: Utilizing agentic_code_engine Redis sub-module client for Vector Provider."
-                    )
-                except ImportError:
-                    logger.warning("Could not import unified Redis client. Falling back to discrete connection.")
-                    client = Redis.from_url(self.redis_url)
+                client = StorageRedisFactory.get_client(
+                    host=self.host, port=self.port, password=self.password, ssl=self.ssl, use_cluster=True
+                )
+            else:
+                from ..redis_client import StorageRedisFactory
+
+                client = StorageRedisFactory.get_client(
+                    host=self.host, port=self.port, password=self.password, ssl=self.ssl, use_cluster=False
+                )
 
             await cast(Awaitable[bool], client.ping())
             if not getattr(client, "_is_shared", False) and not isinstance(client, RedisCluster):
