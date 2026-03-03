@@ -49,6 +49,12 @@ except ImportError:
     class AsyncSearchIndex:  # type: ignore[no-redef]
         """Fallback stub when redisvl is not installed."""
 
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def set_client(self, client: Any) -> None:
+            pass
+
     class IndexSchema:  # type: ignore[no-redef]
         """Fallback stub when redisvl is not installed."""
 
@@ -105,6 +111,7 @@ class RedisVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck, IBackupP
 
         self._indices: dict[str, AsyncSearchIndex] = {}
         self._health_monitor = HealthMonitor()
+        self.client: Optional[Redis | RedisCluster] = None
 
     async def initialize(self) -> None:
         """Initialize connection and verify connectivity."""
@@ -112,22 +119,24 @@ class RedisVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck, IBackupP
             raise ImportError("redisvl and redis-py[asyncio] are required for RedisVectorProvider.")
 
         try:
-            client: Redis | RedisCluster
             if self.use_cluster:
                 from ..redis_client import StorageRedisFactory
 
-                client = StorageRedisFactory.get_client(
+                self.client = StorageRedisFactory.get_client(
                     host=self.host, port=self.port, password=self.password, ssl=self.ssl, use_cluster=True
                 )
             else:
                 from ..redis_client import StorageRedisFactory
 
-                client = StorageRedisFactory.get_client(
+                self.client = StorageRedisFactory.get_client(
                     host=self.host, port=self.port, password=self.password, ssl=self.ssl, use_cluster=False
                 )
 
-            await cast(Awaitable[bool], client.ping())
-            if not getattr(client, "_is_shared", False) and not isinstance(client, RedisCluster):
+            if not self.client:
+                raise StorageError("Redis client is not initialized.")
+
+            await cast(Awaitable[bool], self.client.ping())
+            if not getattr(self.client, "_is_shared", False) and not isinstance(self.client, RedisCluster):
                 # Only close if it's a locally generated stub client, not the shared one
                 pass
 
@@ -166,7 +175,9 @@ class RedisVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck, IBackupP
 
         try:
             schema = IndexSchema.from_dict(schema_dict)
-            index = AsyncSearchIndex(schema, redis_url=self.redis_url)
+            index = AsyncSearchIndex(schema)
+            if self.client is not None:
+                index.set_client(self.client)
 
             if not await index.exists():
                 await index.create(overwrite=kwargs.get("overwrite", False))
@@ -280,14 +291,13 @@ class RedisVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck, IBackupP
 
     async def delete(self, index_name: str, ids: list[str]) -> bool:
         """Delete vectors by ID."""
-        if index_name not in self._indices:
+        if index_name not in self._indices or not self.client:
             return False
 
         index = self._indices[index_name]
         try:
             keys = [index.key(doc_id) for doc_id in ids]
-            async with Redis.from_url(self.redis_url) as client:
-                await client.delete(*keys)
+            await self.client.delete(*keys)
             return True
         except Exception as e:
             logger.error(f"Failed to delete from Redis index {index_name}: {e}")  # nosec B608
@@ -295,13 +305,12 @@ class RedisVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck, IBackupP
 
     async def get_index_stats(self, index_name: str) -> dict[str, Any]:
         """Get index statistics."""
-        if index_name not in self._indices:
+        if index_name not in self._indices or not self.client:
             return {}
 
         try:
-            async with Redis.from_url(self.redis_url) as client:
-                info: dict[str, Any] = await client.ft(index_name).info()
-                return info
+            info: dict[str, Any] = await self.client.ft(index_name).info()
+            return info
         except Exception as exc:
             logger.warning("get_index_stats failed for Redis index %s: %s", index_name, exc)
             return {}
@@ -376,9 +385,10 @@ class RedisVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck, IBackupP
         return self._health_monitor.is_healthy()
 
     async def perform_deep_health_check(self) -> bool:
+        if not self.client:
+            return False
         try:
-            async with Redis.from_url(self.redis_url) as client:
-                await client.ping()
+            await self.client.ping()
             return True
         except Exception:
             return False
@@ -401,22 +411,24 @@ class RedisVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck, IBackupP
                 "indices": indices_data,
             }
 
-            async with Redis.from_url(self.redis_url) as client:
-                for name, index in self._indices.items():
-                    # For a real sovereign backup, we should iterate all keys with the prefix
-                    # and dump them. This is a simplified version using redisvl load/dump if available
-                    # or manual scan.
-                    keys = await client.keys(f"{self.prefix}{name}:*")
-                    index_data: list[dict[str, Any]] = []
-                    for key in keys:
-                        data = await client.hgetall(key)
-                        # Decode bytes
-                        decoded_data = {
-                            k.decode() if isinstance(k, bytes) else k: v.decode() if isinstance(v, bytes) else v
-                            for k, v in data.items()
-                        }
-                        index_data.append(decoded_data)
-                    indices_data[name] = index_data
+            if not self.client:
+                raise StorageError("Redis client is not initialized.")
+
+            for name, index in self._indices.items():
+                # For a real sovereign backup, we should iterate all keys with the prefix
+                # and dump them. This is a simplified version using redisvl load/dump if available
+                # or manual scan.
+                keys = await self.client.keys(f"{self.prefix}{name}:*")
+                index_data: list[dict[str, Any]] = []
+                for key in keys:
+                    data = await self.client.hgetall(key)
+                    # Decode bytes
+                    decoded_data = {
+                        k.decode() if isinstance(k, bytes) else k: v.decode() if isinstance(v, bytes) else v
+                        for k, v in data.items()
+                    }
+                    index_data.append(decoded_data)
+                indices_data[name] = index_data
 
             target = Path(backup_path)
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -439,21 +451,23 @@ class RedisVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck, IBackupP
 
             if aiofiles is None:
                 raise ImportError("aiofiles is required for RedisVectorProvider.restore_backup")
+            if not self.client:
+                raise StorageError("Redis client is not initialized.")
+
             async with aiofiles.open(backup_path, encoding="utf-8") as f:
                 content = await f.read()
                 backup_data = json.loads(content)
 
-            async with Redis.from_url(self.redis_url) as client:
-                for name, index_data in backup_data.get("indices", {}).items():
-                    if clear_existing:
-                        keys = await client.keys(f"{self.prefix}{name}:*")
-                        if keys:
-                            await client.delete(*keys)
+            for name, index_data in backup_data.get("indices", {}).items():
+                if clear_existing:
+                    keys = await self.client.keys(f"{self.prefix}{name}:*")
+                    if keys:
+                        await self.client.delete(*keys)
 
-                    # In a real restore, we'd need the index schema to be recreated
-                    # This assumes the index object is already in self._indices
-                    if name in self._indices:
-                        await self._indices[name].load(index_data)
+                # In a real restore, we'd need the index schema to be recreated
+                # This assumes the index object is already in self._indices
+                if name in self._indices:
+                    await self._indices[name].load(index_data)
 
             logger.info(f"Redis Vector restored from {backup_path}")
             return True

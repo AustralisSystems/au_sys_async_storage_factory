@@ -50,8 +50,15 @@ class IBlobIndex(ABC):
 class RedisBlobIndex(IBlobIndex):
     """Redis-based implementation of the blob index."""
 
-    def __init__(self, redis_client: Any, prefix: str = "blob_meta:"):
-        self.client = redis_client
+    def __init__(self, redis_client: Optional[Any] = None, prefix: str = "blob_meta:"):
+        if redis_client is None:
+            from storage.redis_client import StorageRedisFactory
+            from storage.shared.services.config.settings import get_settings
+
+            settings = get_settings()
+            self.client = StorageRedisFactory.get_client(host=settings.redis_host, port=settings.redis_port)
+        else:
+            self.client = redis_client
         self.prefix = prefix
 
     def _full_key(self, key: str) -> str:
