@@ -31,7 +31,7 @@ from pydantic import BaseModel
 try:
     from redis.asyncio import Redis
 
-    from src.api.services.redis.core.factory import AsyncRedisFactory
+    from redis.factory import AsyncRedisFactory
 
     _HAS_REDIS = True
 except ImportError:

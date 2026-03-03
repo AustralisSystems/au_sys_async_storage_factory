@@ -120,7 +120,7 @@ class RedisVectorProvider(IVectorProvider, ISyncProvider, IHealthCheck, IBackupP
                 # We enforce Storage Factory Symbiosis by mapping the native underlying Redis connection
                 # to the unified redis-py client pool provided by the new Redis sub-module.
                 try:
-                    from src.api.services.redis.core.client import shared_redis_client
+                    from redis.client import shared_redis_client
 
                     client = shared_redis_client.client
                     logger.info(
