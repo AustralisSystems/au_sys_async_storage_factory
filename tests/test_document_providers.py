@@ -2,7 +2,7 @@ import pytest
 import asyncio
 import os
 from beanie import Document, init_beanie
-from storage.providers.beanie_sqlite_adapter import BeanieSQLiteAdapter
+from au_sys_storage.providers.beanie_sqlite_adapter import BeanieSQLiteAdapter
 from pydantic import Field
 
 

@@ -2,8 +2,8 @@ import pytest
 import asyncio
 import os
 from beanie import Document
-from storage.providers.beanie_sqlite_adapter import BeanieSQLiteAdapter
-from storage.document_failover_provider import DocumentFailoverProvider
+from au_sys_storage.providers.beanie_sqlite_adapter import BeanieSQLiteAdapter
+from au_sys_storage.document_failover_provider import DocumentFailoverProvider
 from pydantic import Field
 
 
