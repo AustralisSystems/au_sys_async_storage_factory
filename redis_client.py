@@ -44,14 +44,13 @@ class StorageRedisFactory:
         else:
             try:
                 # Attempt to import from the standalone submodule
-                from redis.client import shared_redis_client  # type: ignore
+                from au_sys_redis.client import shared_redis_client  # type: ignore
 
                 if hasattr(shared_redis_client, "client"):
                     logger.info("Storage Factory Symbiosis: Utilizing agentic_code_engine Redis sub-module client.")
                     return shared_redis_client.client
             except ImportError:
-                # This naturally catches the case where pip's `redis.client` is loaded
-                # and doesn't have `shared_redis_client`.
+                # This naturally catches the case where the au_sys_redis submodule is absent
                 pass
             except Exception as e:
                 logger.warning(f"Error while resolving standalone Redis sub-module: {e}")
