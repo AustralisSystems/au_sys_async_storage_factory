@@ -34,7 +34,9 @@ app.include_router(get_storage_router())
 
 # Include the MCP SSE endpoints
 from au_sys_storage.mcp_server import mcp
+
 app.mount("/mcp", mcp.sse_app)
+
 
 @app.get("/healthz", tags=["health"])
 async def health_check():

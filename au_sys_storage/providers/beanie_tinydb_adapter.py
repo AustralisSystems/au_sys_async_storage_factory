@@ -550,7 +550,7 @@ class BeanieTinyDBAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
 
         try:
             # Try to parse the JSON to validate it
-            with open(backup_path, "r", encoding="utf-8") as f:
+            with open(backup_path, encoding="utf-8") as f:
                 json.load(f)
             return {"valid": True, "size": path.stat().st_size}
         except Exception as e:

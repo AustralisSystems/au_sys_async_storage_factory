@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 mcp = FastMCP("au-sys-storage")
 
+
 @mcp.tool()
 async def list_blobs(prefix: str = "", limit: int = 50) -> dict[str, Any]:
     """List files in the configured blob storage.
@@ -31,6 +32,7 @@ async def list_blobs(prefix: str = "", limit: int = 50) -> dict[str, Any]:
     factory = get_storage_factory()
     # This would integrate with the active blob provider
     return {"blobs": []}
+
 
 @mcp.tool()
 async def upload_blob(key: str, data: str) -> dict[str, Any]:
@@ -45,11 +47,13 @@ async def upload_blob(key: str, data: str) -> dict[str, Any]:
     # Logic to use factory and upload
     return {"success": True, "key": key}
 
+
 @mcp.tool()
 async def get_storage_health() -> dict[str, Any]:
     """Check the status of all storage backends."""
     admin = get_admin_portal_service()
     return await admin.get_all_providers_health()
+
 
 def get_mcp_storage_server() -> FastMCP:
     return mcp
