@@ -22,7 +22,7 @@ mcp = FastMCP("au-sys-storage")
 
 
 @mcp.tool()
-async def list_blobs(prefix: str = "", limit: int = 50) -> dict[str, Any]:
+async def list_blobs(prefix: str = "", limit: int = 50) -> list[dict[str, Any]]:
     """List files in the configured blob storage.
 
     Args:
@@ -35,7 +35,7 @@ async def list_blobs(prefix: str = "", limit: int = 50) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def upload_blob(key: str, data: str) -> dict[str, Any]:
+async def upload_blob(key: str, data: str) -> list[dict[str, Any]]:
     """Upload a text or binary file to storage.
 
     Args:
@@ -49,7 +49,7 @@ async def upload_blob(key: str, data: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def get_storage_health() -> dict[str, Any]:
+async def get_storage_health() -> list[dict[str, Any]]:
     """Check the status of all storage backends."""
     admin = get_admin_portal_service()
     return await admin.get_all_providers_health()

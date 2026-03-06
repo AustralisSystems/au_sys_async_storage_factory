@@ -23,7 +23,7 @@ class MCPJsonRPCRequest(BaseModel):
 class MCPJsonRPCResponse(BaseModel):
     jsonrpc: str = "2.0"
     id: int | str | None = None
-    result: dict[str, Any] | None = None
+    result: Any = None
     error: dict[str, Any] | None = None
 
 
@@ -36,7 +36,7 @@ async def mcp_health() -> dict[str, str]:
 async def list_tools() -> dict[str, Any]:
     """List all available MCP tools (non-JSON-RPC compatible endpoint)."""
     server = get_mcp_storage_server()
-    tools = server.get_tools()
+    tools = await server.list_tools()
     return {
         "tools": [
             {
@@ -93,7 +93,7 @@ async def mcp_jsonrpc(request: MCPJsonRPCRequest) -> MCPJsonRPCResponse:
 
     if method == "tools/list":
         server = get_mcp_storage_server()
-        tools = server.get_tools()
+        tools = await server.list_tools()
         return MCPJsonRPCResponse(
             id=request.id,
             result={

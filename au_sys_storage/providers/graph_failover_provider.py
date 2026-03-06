@@ -126,7 +126,11 @@ class GraphFailoverProvider(IGraphProvider, ISyncProvider, IHealthCheck, IBackup
     ) -> SyncResult:
         if isinstance(self._active_provider, ISyncProvider):
             return await self._active_provider.sync_to(target_provider, direction, conflict_resolution, dry_run)
-        raise NotImplementedError("Sync not supported.")
+
+        result = SyncResult()
+        result.success = False
+        result.errors.append("Sync not supported.")
+        return result
 
     def get_sync_metadata(self) -> dict[str, Any]:
         return {}

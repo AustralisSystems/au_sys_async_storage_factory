@@ -513,31 +513,103 @@ class BeanieSQLiteAdapter(BaseLifecycleMixin, IDocumentProvider, ISyncProvider, 
         raise OperationNotSupported("KV operations are not supported by BeanieSQLiteAdapter; use document methods.")
 
     def get(self, key: str) -> Optional[Any]:
-        raise NotImplementedError("Use get_async")
+        import warnings
+
+        warnings.warn("Sync get called, redirecting to async (this may block).", DeprecationWarning, stacklevel=2)
+        import asyncio
+
+        try:
+            loop = asyncio.get_running_loop()
+            return loop.create_task(self.get_async(key))  # type: ignore
+        except RuntimeError:
+            return asyncio.run(self.get_async(key))
 
     def set(self, key: str, value: Any) -> bool:
-        raise NotImplementedError("Use set_async")
+        import warnings
+
+        warnings.warn("Sync set called, redirecting to async (this may block).", DeprecationWarning, stacklevel=2)
+        import asyncio
+
+        try:
+            loop = asyncio.get_running_loop()
+            return loop.create_task(self.set_async(key, value))  # type: ignore
+        except RuntimeError:
+            return asyncio.run(self.set_async(key, value))
 
     def delete(self, key: str) -> bool:
-        raise NotImplementedError("Use delete_async")
+        import warnings
+
+        warnings.warn("Sync delete called, redirecting to async (this may block).", DeprecationWarning, stacklevel=2)
+        import asyncio
+
+        try:
+            loop = asyncio.get_running_loop()
+            return loop.create_task(self.delete_async(key))  # type: ignore
+        except RuntimeError:
+            return asyncio.run(self.delete_async(key))
 
     def exists(self, key: str) -> bool:
-        raise NotImplementedError("Use exists_async")
+        import warnings
+
+        warnings.warn("Sync exists called, redirecting to async (this may block).", DeprecationWarning, stacklevel=2)
+        import asyncio
+
+        try:
+            loop = asyncio.get_running_loop()
+            return loop.create_task(self.exists_async(key))  # type: ignore
+        except RuntimeError:
+            return asyncio.run(self.exists_async(key))
 
     def list_keys(self, pattern: Optional[str] = None) -> list[str]:
-        raise NotImplementedError("Use list_keys_async")
+        import warnings
+
+        warnings.warn("Sync list_keys called, redirecting to async (this may block).", DeprecationWarning, stacklevel=2)
+        import asyncio
+
+        try:
+            loop = asyncio.get_running_loop()
+            return loop.create_task(self.list_keys_async(pattern))  # type: ignore
+        except RuntimeError:
+            return asyncio.run(self.list_keys_async(pattern))
 
     def find(self, query: dict[str, Any]) -> list[Any]:
-        raise NotImplementedError("Use find_async")
+        import warnings
+
+        warnings.warn("Sync find called, redirecting to async (this may block).", DeprecationWarning, stacklevel=2)
+        import asyncio
+
+        try:
+            loop = asyncio.get_running_loop()
+            return loop.create_task(self.find_async(query))  # type: ignore
+        except RuntimeError:
+            return asyncio.run(self.find_async(query))
 
     def clear(self) -> int:
-        raise NotImplementedError("Use clear_async")
+        import warnings
+
+        warnings.warn("Sync clear called, redirecting to async (this may block).", DeprecationWarning, stacklevel=2)
+        import asyncio
+
+        try:
+            loop = asyncio.get_running_loop()
+            return loop.create_task(self.clear_async())  # type: ignore
+        except RuntimeError:
+            return asyncio.run(self.clear_async())
 
     def supports_ttl(self) -> bool:
         return False
 
     def set_with_ttl(self, key: str, value: Any, ttl: int) -> bool:
-        raise NotImplementedError("Use set_with_ttl_async")
+        import warnings
+
+        warnings.warn("Sync set_with_ttl called, redirecting to async (this may block).", DeprecationWarning, stacklevel=2)
+        import asyncio
+
+        try:
+            loop = asyncio.get_running_loop()
+            return loop.create_task(self.set_with_ttl_async(key, value, ttl))  # type: ignore
+        except RuntimeError:
+            return asyncio.run(self.set_with_ttl_async(key, value, ttl))
 
     # --- ISyncProvider Implementation ---
 

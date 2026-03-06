@@ -207,7 +207,10 @@ class RelationalFailoverProvider(IRelationalProvider, ISyncProvider):
         if isinstance(self._active_provider, ISyncProvider):
             return await self._active_provider.sync_to(target_provider, direction, conflict_resolution, dry_run)
 
-        raise NotImplementedError("Underlying provider does not support sync.")
+        result = SyncResult()
+        result.success = False
+        result.errors.append("Underlying provider does not support sync.")
+        return result
 
     def get_sync_metadata(self) -> dict[str, Any]:
         return {

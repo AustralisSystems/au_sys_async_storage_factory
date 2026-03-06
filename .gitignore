@@ -1,3 +1,72 @@
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+*/__pycache__/
+au_*/__pycache__/
+
+# Pytest / Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Builds / Distributions
+dist/
+*.egg-info/
+.eggs/
+
+# ACE Absolute Paths
+logs/
+
+# System Logs
+*.log
+
+
+# Reference Repositories
+_reference_lib/**
+docs/_reference_lib_docs/**
+
+# copied code and libraries
+_copied/**
+
+# Artifacts
+artifacts/**/*.json
+artifacts/**/*.csv
+artifacts/**/*.txt
+
+# ace data artifacts
+capabilities/ai_automation/data/**/*.json
+capabilities/ai_automation/data/**/*.csv
+capabilities/ai_automation/data/**/*.txt
+capabilities/artifacts/ai_automation/harvest_data/**/*.json
+capabilities/artifacts/ai_automation/harvest_data/**/*.csv
+capabilities/artifacts/ai_automation/harvest_data/**/*.txt
+
+# Ai Junk Files in the root
+*.txt
+
+
+
+
+#### may be duplicates
+
 # Python
 __pycache__
 /**/__pycache__/**
@@ -6,13 +75,11 @@ __pycache__
 *$py.class
 *.so
 .Python
-build/
 develop-eggs/
 dist/
 downloads/
 eggs/
 .eggs/
-lib/
 lib64/
 parts/
 sdist/
@@ -150,7 +217,7 @@ reference_repos/
 docs/implementation/instructions/reference_repos/
 
 validation/results/
-_ops
+
 
 # Git rewrite artifacts
 .git-rewrite/
