@@ -14,7 +14,7 @@ from au_sys_storage.security.compliance import (
 from au_sys_storage.shared.observability.logger_factory import get_component_logger
 
 # Force UTF-8 stdout encoding for Python CLIs
-if sys.stdout.encoding != "utf-8" and hasattr(sys.stdout, "reconfigure"):
+if getattr(sys.stdout, "encoding", None) != "utf-8" and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 try:

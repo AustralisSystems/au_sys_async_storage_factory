@@ -9,7 +9,7 @@ def get_component_logger(component: str, subcomponent: Optional[str] = None) -> 
     Ensures UTF-8 configuration for consistency.
     """
     # Force UTF-8 stdout encoding for Python CLIs
-    if sys.stdout.encoding != "utf-8" and hasattr(sys.stdout, "reconfigure"):
+    if getattr(sys.stdout, "encoding", None) != "utf-8" and hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
 
     name = component

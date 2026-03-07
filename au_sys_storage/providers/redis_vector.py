@@ -74,7 +74,7 @@ from ..interfaces.sync import ISyncProvider, SyncConflictResolution, SyncDirecti
 from ..shared.observability.logger_factory import get_component_logger
 
 # Force UTF-8 stdout encoding for Python CLIs
-if sys.stdout.encoding != "utf-8" and hasattr(sys.stdout, "reconfigure"):
+if getattr(sys.stdout, "encoding", None) != "utf-8" and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 logger = get_component_logger("storage", "redis_vector")
