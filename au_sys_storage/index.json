@@ -1,0 +1,160 @@
+{
+  "files": [
+    {
+      "filename": "__init__.py",
+      "status": "ACTIVE",
+      "summary": "Storage service package scaffolding.",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "admin.py",
+      "status": "ACTIVE",
+      "summary": "import asyncio",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "admin_portal.py",
+      "status": "ACTIVE",
+      "summary": "from __future__ import annotations",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "app.py",
+      "status": "ACTIVE",
+      "summary": "from contextlib import asynccontextmanager",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "async_memory_provider.py",
+      "status": "ACTIVE",
+      "summary": "from __future__ import annotations",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "async_postgres_provider.py",
+      "status": "ACTIVE",
+      "summary": "from __future__ import annotations",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "async_sqldb_provider.py",
+      "status": "ACTIVE",
+      "summary": "from __future__ import annotations",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "async_sqlite_provider.py",
+      "status": "ACTIVE",
+      "summary": "from __future__ import annotations",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "config.py",
+      "status": "ACTIVE",
+      "summary": "from __future__ import annotations",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "document_failover_provider.py",
+      "status": "ACTIVE",
+      "summary": "from __future__ import annotations",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "factory.py",
+      "status": "ACTIVE",
+      "summary": "from __future__ import annotations",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "mcp_server.py",
+      "status": "ACTIVE",
+      "summary": "from __future__ import annotations",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "models.py",
+      "status": "ACTIVE",
+      "summary": "from __future__ import annotations",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "README.md",
+      "status": "ACTIVE",
+      "summary": "**Auto-generated README (initial content)**",
+      "tags": [
+        "markdown",
+        "readme"
+      ],
+      "type": "md"
+    },
+    {
+      "filename": "redis_client.py",
+      "status": "ACTIVE",
+      "summary": "import logging",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "relational_failover_provider.py",
+      "status": "ACTIVE",
+      "summary": "from __future__ import annotations",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "stdio_server.py",
+      "status": "ACTIVE",
+      "summary": "from .mcp_server import get_mcp_storage_server",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    }
+  ],
+  "generated_at": "2026-03-07T03:05:36Z",
+  "root": "au_sys_storage"
+}

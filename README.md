@@ -539,24 +539,19 @@ class DocumentNamespaceStore:
 
 **Auto-generated metadata (idempotent)**
 
-Generated at: 2026-02-18T04:45:03Z
+Generated at: 2026-03-07T03:05:35Z
 
 Key files summary:
 
+- `.git` — gitdir: ..\.git\modules\storage
+- `.gitignore` — # Environments
+- `docker-compose.sidecar.local.yml` — services:
+- `Dockerfile` — FROM python:3.12-slim
+- `pyproject.toml` — [project]
+- `pytest_output.txt` — ============================= test session starts =============================
 - `README.md` — **Version**: 1.0.0 **Last Updated**: 2025-12-15 **Status**: Production Ready
-- `__init__.py` — Storage service package scaffolding.
-- `beanie_sqlite_adapter.py` — Beanie ODM -> SQLite Adapter - ENTERPRISE GRADE.
-- `beanie_tinydb_adapter.py` — Beanie ODM -> TinyDB Adapter - CRITICAL AND MANDATORY.
-- `blob_factory.py` — from typing import Optional, Any
-- `blob_storage.py` — Blob Storage Service Implementation.
-- `config.py` — Storage configuration utilities.
-- `connection_registry.py` — import json
-- `dynamic_manager.py` — Dynamic storage manager.
-- `factory.py` — Storage factory responsible for returning encrypted storage adapters.
-- `lifecycle_manager.py` — import logging
-- `sqlite_provider.py` — SQLite Storage Provider - Clean implementation following SOLID principles.
-- `tinydb_doc_ids.py` — Utility helpers for deterministic TinyDB document identifiers.
-- `tinydb_provider.py` — TinyDB Storage Provider - Clean implementation following SOLID principles.
+- `test_tiny.json` — {"tiny_docs": {}}
 
 
 <!-- AUTO-GENERATED: END -->
+

@@ -1,0 +1,43 @@
+{
+  "files": [
+    {
+      "filename": "README.md",
+      "status": "ACTIVE",
+      "summary": "**Auto-generated README (initial content)**",
+      "tags": [
+        "markdown",
+        "readme"
+      ],
+      "type": "md"
+    },
+    {
+      "filename": "test_document_providers.py",
+      "status": "ACTIVE",
+      "summary": "import pytest",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "test_failover_provider.py",
+      "status": "ACTIVE",
+      "summary": "import pytest",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    },
+    {
+      "filename": "test_tinydb_provider.py",
+      "status": "ACTIVE",
+      "summary": "import pytest",
+      "tags": [
+        "python"
+      ],
+      "type": "py"
+    }
+  ],
+  "generated_at": "2026-03-07T03:05:36Z",
+  "root": "tests"
+}
